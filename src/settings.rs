@@ -33,7 +33,9 @@ pub fn apply(ctx: &egui::Context, appearance: &Appearance) {
     }
     ctx.set_fonts(definitions);
 
+    ctx.set_theme(egui::Theme::Dark);
     let mut style = (*ctx.style_of(egui::Theme::Dark)).clone();
+    style.visuals.override_text_color = Some(egui::Color32::from_rgb(0xE4, 0xE6, 0xEA));
     for (text_style, size) in style_sizes(appearance.font_size) {
         let family = if text_style == egui::TextStyle::Monospace {
             egui::FontFamily::Monospace

@@ -48,15 +48,15 @@ pub fn message_ui(
             ui.label(
                 egui::RichText::new(time)
                     .size(small_size)
-                    .color(egui::Color32::from_gray(120)),
+                    .color(egui::Color32::from_gray(150)),
             );
         }
 
         let color = message
             .author
             .color
-            .map(|[r, g, b]| egui::Color32::from_rgb(r, g, b))
-            .unwrap_or(egui::Color32::from_rgb(0xAD, 0xA9, 0xB4));
+            .map(ui::readable_nick_color)
+            .unwrap_or(egui::Color32::from_rgb(0xC4, 0xC0, 0xCC));
         ui.label(
             egui::RichText::new(format!("{}:", message.author.name))
                 .strong()

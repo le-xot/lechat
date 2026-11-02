@@ -6,6 +6,18 @@ use crate::model::Platform;
 pub const NEAR_BOTTOM_PX: f32 = 64.0;
 pub const EMOTE_LINE_FACTOR: f32 = 1.5;
 
+/// Keeps platform-provided nick colours readable on the dark background.
+pub fn readable_nick_color([r, g, b]: [u8; 3]) -> egui::Color32 {
+    let luminance = 0.2126 * r as f32 + 0.7152 * g as f32 + 0.0722 * b as f32;
+    const MIN: f32 = 120.0;
+    if luminance >= MIN {
+        return egui::Color32::from_rgb(r, g, b);
+    }
+    let t = ((MIN - luminance) / (255.0 - luminance).max(1.0)).clamp(0.0, 0.75);
+    let lift = |channel: u8| (channel as f32 + (255.0 - channel as f32) * t) as u8;
+    egui::Color32::from_rgb(lift(r), lift(g), lift(b))
+}
+
 pub fn format_time(ts_ms: i64, with_seconds: bool) -> String {
     let pattern = if with_seconds { "%H:%M:%S" } else { "%H:%M" };
     chrono::DateTime::from_timestamp_millis(ts_ms)
@@ -62,6 +74,14 @@ pub fn source_badge(ui: &mut egui::Ui, platform: Platform, tooltip: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dark_nick_colors_are_lifted() {
+        let dark = readable_nick_color([0, 0, 120]);
+        assert!(dark.b() > 120, "тёмно-синий должен стать светлее");
+        let bright = readable_nick_color([0xFF, 0xB8, 0x6C]);
+        assert_eq!(bright, egui::Color32::from_rgb(0xFF, 0xB8, 0x6C));
+    }
 
     #[test]
     fn formats_time_with_and_without_seconds() {
