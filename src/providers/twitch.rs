@@ -1,4 +1,4 @@
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
@@ -17,6 +17,8 @@ const IRC_URL: &str = "wss://irc-ws.chat.twitch.tv:443";
 /// more often and treat a long silence as a dead connection.
 const PING_EVERY: Duration = Duration::from_secs(60);
 const SILENCE_LIMIT: Duration = Duration::from_secs(300);
+const RECENT_MESSAGES_URL: &str = "https://recent-messages.robotty.de/api/v2/recent-messages";
+const HISTORY_LIMIT: u32 = 100;
 
 pub fn handshake_lines(channel: &str, nick: &str) -> Vec<String> {
     vec![
@@ -25,6 +27,49 @@ pub fn handshake_lines(channel: &str, nick: &str) -> Vec<String> {
         "CAP REQ :twitch.tv/tags twitch.tv/commands".to_string(),
         format!("JOIN #{}", channel.trim_start_matches('#').to_lowercase()),
     ]
+}
+
+/// URL of the public recent-messages service used by Chatterino.
+pub fn recent_messages_url(channel: &str, after_ms: Option<i64>, limit: u32) -> String {
+    let channel = channel.trim_start_matches('#').to_lowercase();
+    let mut url = format!("{RECENT_MESSAGES_URL}/{channel}");
+    match after_ms {
+        Some(after) => url.push_str(&format!("?after={after}&limit={limit}")),
+        None => url.push_str(&format!("?limit={limit}")),
+    }
+    url
+}
+
+/// Parses the JSON payload of the recent-messages service into messages.
+/// `error_code` responses (e.g. `channel_not_joined`) yield nothing.
+pub fn parse_recent_messages(payload: &serde_json::Value, catalog: &EmoteCatalog) -> Vec<Message> {
+    if payload
+        .get("error_code")
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(|code| !code.is_empty())
+    {
+        return Vec::new();
+    }
+    payload["messages"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|value| value.as_str())
+        .filter_map(parse_line)
+        .filter_map(|line| line_to_message(&line, catalog))
+        .collect()
+}
+
+async fn fetch_recent_payload(
+    http: &reqwest::Client,
+    url: &str,
+) -> anyhow::Result<serde_json::Value> {
+    let response = http.get(url).send().await?;
+    let status = response.status();
+    if !status.is_success() {
+        anyhow::bail!("recent messages HTTP {status}");
+    }
+    Ok(response.json().await?)
 }
 
 pub fn next_backoff(attempt: u32) -> Duration {
@@ -118,13 +163,30 @@ pub async fn run(
 ) {
     let mut attempt = 0u32;
     let connected = Arc::new(AtomicBool::new(false));
+    let last_ts = Arc::new(AtomicI64::new(0));
+    let http = reqwest::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .connect_timeout(Duration::from_secs(5))
+        .build()
+        .unwrap_or_default();
     loop {
         if tx.is_closed() {
             return;
         }
         let _ = tx.send(ProviderEvent::Status(index, ConnectionStatus::Connecting));
         ctx.request_repaint();
-        match session(index, &channel, &catalog, &tx, &ctx, &connected).await {
+        match session(
+            index,
+            &channel,
+            &catalog,
+            &tx,
+            &ctx,
+            &connected,
+            &last_ts,
+            &http,
+        )
+        .await
+        {
             Ok(()) => {}
             Err(err) => {
                 let _ = tx.send(ProviderEvent::Error(index, format!("{err:#}")));
@@ -150,6 +212,7 @@ pub async fn run(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn session(
     index: usize,
     channel: &str,
@@ -157,6 +220,8 @@ async fn session(
     tx: &UnboundedSender<ProviderEvent>,
     ctx: &egui::Context,
     connected: &AtomicBool,
+    last_ts: &AtomicI64,
+    http: &reqwest::Client,
 ) -> anyhow::Result<()> {
     let (mut ws, _) = tokio::time::timeout(
         Duration::from_secs(20),
@@ -217,6 +282,30 @@ async fn session(
                 connected.store(true, Ordering::Relaxed);
                 let _ = tx.send(ProviderEvent::Status(index, ConnectionStatus::Connected));
                 ctx.request_repaint();
+
+                let known = last_ts.load(Ordering::Relaxed);
+                let url = recent_messages_url(
+                    channel,
+                    (known > 0).then_some(known),
+                    HISTORY_LIMIT,
+                );
+                match fetch_recent_payload(http, &url).await {
+                    Ok(payload) => {
+                        let catalog = catalog.read().unwrap();
+                        let mut history = parse_recent_messages(&payload, &catalog);
+                        drop(catalog);
+                        if let Some(newest) = history.iter().map(|m| m.ts_ms).max() {
+                            last_ts.fetch_max(newest, Ordering::Relaxed);
+                        }
+                        history.sort_by_key(|message| message.ts_ms);
+                        if !history.is_empty() {
+                            tracing::info!("twitch history: {} сообщений", history.len());
+                            let _ = tx.send(ProviderEvent::History(history));
+                            ctx.request_repaint();
+                        }
+                    }
+                    Err(err) => tracing::warn!("twitch history: {err:#}"),
+                }
                 continue;
             }
 
@@ -233,6 +322,7 @@ async fn session(
             let catalog = catalog.read().unwrap();
             if let Some(message) = line_to_message(&line, &catalog) {
                 drop(catalog);
+                last_ts.fetch_max(message.ts_ms, Ordering::Relaxed);
                 let _ = tx.send(ProviderEvent::Message(message));
                 ctx.request_repaint();
             }
@@ -271,6 +361,54 @@ mod tests {
         assert_eq!(msg.author.color, Some([0x2e, 0x8b, 0x57]));
         assert_eq!(msg.ts_ms, 1793656722613);
         assert!(matches!(&msg.parts[0], Part::Text(t) if t == "TWEAK SHIIII"));
+    }
+
+    #[test]
+    fn builds_recent_messages_url() {
+        assert_eq!(
+            recent_messages_url("#etonelexot", None, 100),
+            "https://recent-messages.robotty.de/api/v2/recent-messages/etonelexot?limit=100"
+        );
+        assert_eq!(
+            recent_messages_url("etonelexot", Some(1793660105830), 50),
+            "https://recent-messages.robotty.de/api/v2/recent-messages/etonelexot?after=1793660105830&limit=50"
+        );
+    }
+
+    #[test]
+    fn parses_recent_messages_fixture() {
+        let payload: serde_json::Value =
+            serde_json::from_str(include_str!("fixtures/recent_messages.json")).unwrap();
+        let messages = parse_recent_messages(&payload, &EmoteCatalog::new());
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0].id, "m1");
+        assert_eq!(messages[0].channel, "etonelexot");
+        assert_eq!(messages[1].id, "m2");
+        assert!(
+            messages
+                .iter()
+                .any(|m| matches!(&m.parts[0], Part::Text(t) if t == "тест"))
+        );
+    }
+
+    #[test]
+    fn error_payload_yields_no_history() {
+        let payload: serde_json::Value = serde_json::from_str(
+            r#"{"status":400,"error":"not joined","error_code":"channel_not_joined"}"#,
+        )
+        .unwrap();
+        assert!(parse_recent_messages(&payload, &EmoteCatalog::new()).is_empty());
+    }
+
+    #[tokio::test]
+    #[ignore = "живой запрос к recent-messages"]
+    async fn live_recent_messages() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let http = reqwest::Client::new();
+        let url = recent_messages_url("etonelexot", None, 100);
+        let payload = fetch_recent_payload(&http, &url).await.unwrap();
+        let messages = parse_recent_messages(&payload, &EmoteCatalog::new());
+        assert!(!messages.is_empty(), "у канала нет истории: {payload}");
     }
 
     #[tokio::test]

@@ -1,0 +1,7 @@
+{
+  "messages": [
+    "@emote-only=0;room-id=1263747798;slow=0 :tmi.twitch.tv ROOMSTATE #etonelexot",
+    "@color=#B22222;display-name=EtoNeLexot;emotes=;id=m1;historical=1;tmi-sent-ts=1793660105830 :etonelexot!etonelexot@etonelexot.tmi.twitch.tv PRIVMSG #etonelexot :bb",
+    "@color=#B22222;display-name=EtoNeLexot;emotes=;id=m2;historical=1;tmi-sent-ts=1793660613850 :etonelexot!etonelexot@etonelexot.tmi.twitch.tv PRIVMSG #etonelexot :тест"
+  ]
+}

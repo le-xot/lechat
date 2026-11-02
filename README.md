@@ -3,7 +3,9 @@
 Read-only chat viewer for streamers who broadcast to two platforms at once. One native
 window, one merged feed, a platform badge in front of every message.
 
-- **Twitch** — anonymous IRC over WebSocket (`justinfan`), no login, read-only.
+- **Twitch** — anonymous IRC over WebSocket (`justinfan`), no login, read-only. On connect
+  the last messages are backfilled from the public
+  [recent-messages](https://recent-messages.robotty.de) service (the same one Chatterino uses).
 - **streamx** — GraphQL over HTTP + WebSocket subscriptions, no login.
 - **7TV** — channel and global emotes, wide and zero-width emotes, optional animation.
 - Built with [egui](https://github.com/emilk/egui) 0.37 / eframe, one binary, no backend.
@@ -58,8 +60,9 @@ message time. Add more panels to follow more channels.
 
 ## Known limitations
 
-- Twitch has no history over anonymous IRC, so messages sent while disconnected are
-  gone; the feed inserts a notice when a connection was lost.
+- Twitch IRC itself has no history: the backfill comes from a third-party service and
+  only covers what that service recorded. Messages sent while disconnected may be
+  missing; the feed inserts a notice when a connection was lost.
 - Emotes animate continuously (≈16 fps cap). An animated emote in view redraws the
   feed, so idle CPU is higher than with static emotes.
 - streamx uses an unofficial internal GraphQL API; it can change without notice. The
