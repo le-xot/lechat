@@ -34,19 +34,15 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
+    pub fn new(
+        cc: &eframe::CreationContext<'_>,
+        config: Config,
+        config_error: Option<String>,
+    ) -> Self {
         egui_extras::install_image_loaders(&cc.egui_ctx);
         cc.egui_ctx
             .add_image_loader(Arc::new(crate::images::WebpAnimationLoader::default()));
-
-        let path = Config::default_path();
-        let (config, config_error) = match Config::load_or_create(&path) {
-            Ok(config) => (config, None),
-            Err(err) => (
-                Config::default_config(),
-                Some(format!("конфиг {}: {err:#}", path.display())),
-            ),
-        };
+        cc.egui_ctx.set_visuals(egui::Visuals::dark());
 
         let mut app = Self::build(config, cc.egui_ctx.clone());
         app.config_error = config_error;
@@ -79,7 +75,11 @@ impl App {
             runtime: tokio::runtime::Runtime::new().expect("tokio runtime"),
             ctx,
             handles: Vec::new(),
-            http: reqwest::Client::new(),
+            http: reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(15))
+                .connect_timeout(std::time::Duration::from_secs(10))
+                .build()
+                .unwrap_or_default(),
             pending_reconnects,
             spawn_enabled: false,
         }
@@ -136,8 +136,13 @@ impl App {
     }
 
     fn drain_events(&mut self) {
+        let mut applied = false;
         while let Ok(event) = self.rx.try_recv() {
             self.apply_event(event);
+            applied = true;
+        }
+        if applied {
+            self.ctx.request_repaint();
         }
     }
 
@@ -229,16 +234,8 @@ impl eframe::App for App {
         });
 
         let timeline = &mut self.timeline;
-        let channels = self
-            .sources
-            .iter()
-            .map(|source| match source.cfg.kind {
-                PanelKind::Twitch => (Platform::Twitch, source.cfg.channel.clone()),
-                PanelKind::Streamx => (Platform::Streamx, source.cfg.channel.clone()),
-            })
-            .collect::<Vec<_>>();
         egui::CentralPanel::default().show(ui, |ui| {
-            feed(ui, timeline, &channels);
+            feed(ui, timeline);
         });
     }
 }
@@ -292,7 +289,7 @@ fn status_bar(ui: &mut egui::Ui, sources: &[SourceState], config_error: Option<&
     ui.add_space(4.0);
 }
 
-fn feed(ui: &mut egui::Ui, timeline: &mut Timeline, channels: &[(Platform, String)]) {
+fn feed(ui: &mut egui::Ui, timeline: &mut Timeline) {
     if ui.input(|input| input.smooth_scroll_delta.y > 1.0) {
         timeline.follow = false;
     }
@@ -314,13 +311,7 @@ fn feed(ui: &mut egui::Ui, timeline: &mut Timeline, channels: &[(Platform, Strin
         for entry in &timeline.entries {
             let channel = entry
                 .message()
-                .map(|message| {
-                    channels
-                        .iter()
-                        .find(|(platform, _)| *platform == message.platform)
-                        .map(|(_, channel)| channel.as_str())
-                        .unwrap_or("")
-                })
+                .map(|message| message.channel.as_str())
                 .unwrap_or("");
             row::entry_ui(ui, entry, channel);
         }
@@ -370,6 +361,7 @@ mod tests {
         Message {
             id: id.to_string(),
             platform: Platform::Twitch,
+            channel: "test".into(),
             author: Author {
                 name: "tester".into(),
                 color: None,

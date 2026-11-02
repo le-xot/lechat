@@ -1,13 +1,20 @@
-use std::time::Duration;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{Value, json};
 use tokio::sync::mpsc::UnboundedSender;
 use tokio_tungstenite::tungstenite::Message as WsMessage;
+use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 
 use crate::config::PanelCfg;
 use crate::model::{Author, EmotePart, Message, Part, Platform};
 use crate::providers::{ConnectionStatus, ProviderEvent};
+use crate::util::parse_hex_color;
+
+const PING_EVERY: Duration = Duration::from_secs(25);
+const SILENCE_LIMIT: Duration = Duration::from_secs(90);
 
 const CHANNEL_ID_QUERY: &str = r#"
 query ChannelId($channelName: String!) {
@@ -61,7 +68,11 @@ impl StreamxClient {
     pub fn new(base_url: impl Into<String>) -> Self {
         Self {
             base_url: base_url.into().trim_end_matches('/').to_string(),
-            http: reqwest::Client::new(),
+            http: reqwest::Client::builder()
+                .timeout(Duration::from_secs(15))
+                .connect_timeout(Duration::from_secs(10))
+                .build()
+                .unwrap_or_default(),
         }
     }
 
@@ -110,7 +121,11 @@ impl StreamxClient {
             .as_array()
             .cloned()
             .unwrap_or_default();
-        Ok(items.iter().filter_map(map_message).collect())
+        let channel = channel_id.to_string();
+        Ok(items
+            .iter()
+            .filter_map(|value| map_message(value, &channel))
+            .collect())
     }
 
     pub fn ws_url(&self) -> anyhow::Result<String> {
@@ -132,7 +147,7 @@ pub fn normalize_emote_url(url: &str) -> String {
     }
 }
 
-pub fn map_message(value: &Value) -> Option<Message> {
+pub fn map_message(value: &Value, channel: &str) -> Option<Message> {
     let id = value["id"].as_str()?.to_string();
     let sender = value["sender"]["displayName"].as_str().unwrap_or("unknown");
     let color = value["senderColor"].as_str().and_then(parse_hex_color);
@@ -156,9 +171,19 @@ pub fn map_message(value: &Value) -> Option<Message> {
                 }
                 let width = segment["emote"]["width"].as_f64().unwrap_or(32.0);
                 let height = segment["emote"]["height"].as_f64().unwrap_or(32.0).max(1.0);
+                let aspect = (width / height) as f32;
+                let aspect = if aspect.is_finite() {
+                    aspect.clamp(0.1, 8.0)
+                } else {
+                    1.0
+                };
                 parts.push(Part::Emote(EmotePart {
+                    name: segment["emote"]["name"]
+                        .as_str()
+                        .unwrap_or(content)
+                        .to_string(),
                     uri: normalize_emote_url(url),
-                    aspect: (width / height) as f32,
+                    aspect,
                     zero_width: false,
                 }));
             }
@@ -170,6 +195,7 @@ pub fn map_message(value: &Value) -> Option<Message> {
     Some(Message {
         id,
         platform: Platform::Streamx,
+        channel: channel.to_string(),
         author: Author {
             name: sender.to_string(),
             color,
@@ -177,18 +203,6 @@ pub fn map_message(value: &Value) -> Option<Message> {
         parts,
         ts_ms,
     })
-}
-
-fn parse_hex_color(value: &str) -> Option<[u8; 3]> {
-    let hex = value.trim().strip_prefix('#')?;
-    if hex.len() != 6 {
-        return None;
-    }
-    Some([
-        u8::from_str_radix(&hex[0..2], 16).ok()?,
-        u8::from_str_radix(&hex[2..4], 16).ok()?,
-        u8::from_str_radix(&hex[4..6], 16).ok()?,
-    ])
 }
 
 pub fn subscription_frame(channel_id: &str) -> String {
@@ -211,23 +225,37 @@ pub async fn run(
 ) {
     let client = StreamxClient::new(spec.streamx_base_url());
     let mut attempt = 0u32;
+    let connected = Arc::new(AtomicBool::new(false));
     loop {
         if tx.is_closed() {
             return;
         }
         let _ = tx.send(ProviderEvent::Status(index, ConnectionStatus::Connecting));
-        match session(index, &spec, &client, &tx, &ctx).await {
-            Ok(()) => attempt = 0,
+        ctx.request_repaint();
+        match session(index, &spec, &client, &tx, &ctx, &connected).await {
+            Ok(()) => {}
             Err(err) => {
+                tracing::warn!("streamx: {err:#}");
                 let _ = tx.send(ProviderEvent::Error(index, format!("{err:#}")));
-                let _ = tx.send(ProviderEvent::Note("соединение с streamx потеряно, часть сообщений могла пропасть".to_string()));
+                if connected.swap(false, Ordering::Relaxed) {
+                    let _ = tx.send(ProviderEvent::Note(
+                        "соединение с streamx потеряно, часть сообщений могла пропасть"
+                            .to_string(),
+                    ));
+                }
             }
         }
         if tx.is_closed() {
             return;
         }
-        attempt += 1;
+        if !connected.load(Ordering::Relaxed) {
+            attempt += 1;
+        } else {
+            attempt = 0;
+            connected.store(false, Ordering::Relaxed);
+        }
         let _ = tx.send(ProviderEvent::Status(index, ConnectionStatus::Reconnecting));
+        ctx.request_repaint();
         tokio::time::sleep(crate::providers::twitch::next_backoff(attempt)).await;
     }
 }
@@ -238,46 +266,104 @@ async fn session(
     client: &StreamxClient,
     tx: &UnboundedSender<ProviderEvent>,
     ctx: &egui::Context,
+    connected: &AtomicBool,
 ) -> anyhow::Result<()> {
     let channel_id = client.channel_id(&spec.channel).await?;
-    let history = client.history(&channel_id, 500).await?;
-    let _ = tx.send(ProviderEvent::History(history));
-    ctx.request_repaint();
 
-    let (mut ws, _) = tokio_tungstenite::connect_async(client.ws_url()?).await?;
+    let ws_url = client.ws_url()?;
+    let mut request = ws_url.into_client_request()?;
+    request.headers_mut().insert(
+        "Sec-WebSocket-Protocol",
+        tokio_tungstenite::tungstenite::http::HeaderValue::from_static("graphql-transport-ws"),
+    );
+    let (mut ws, _) = tokio::time::timeout(
+        Duration::from_secs(20),
+        tokio_tungstenite::connect_async(request),
+    )
+    .await
+    .map_err(|_| anyhow::anyhow!("таймаут подключения к streamx"))??;
+
     ws.send(WsMessage::Text(
-        json!({ "type": "connection_init", "payload": {} }).to_string().into(),
+        json!({ "type": "connection_init", "payload": {} })
+            .to_string()
+            .into(),
     ))
     .await?;
 
+    // Wait for the protocol handshake before subscribing.
     loop {
-        let frame = tokio::time::timeout(Duration::from_secs(120), ws.next())
+        let frame = tokio::time::timeout(Duration::from_secs(20), ws.next())
             .await
-            .map_err(|_| anyhow::anyhow!("таймаут соединения со streamx"))?;
+            .map_err(|_| anyhow::anyhow!("streamx не ответил на connection_init"))?;
         let Some(frame) = frame else {
             anyhow::bail!("streamx закрыл соединение");
         };
-        let frame = frame?;
-        let text = match frame {
-            WsMessage::Text(text) => text.to_string(),
-            WsMessage::Binary(bytes) => String::from_utf8_lossy(&bytes).to_string(),
-            WsMessage::Close(_) => anyhow::bail!("streamx закрыл соединение"),
-            _ => continue,
+        let text = text_frame(frame?)?;
+        let value: Value = match serde_json::from_str(&text) {
+            Ok(value) => value,
+            Err(_) => continue,
         };
+        match value["type"].as_str().unwrap_or_default() {
+            "connection_ack" => break,
+            "ping" => {
+                ws.send(WsMessage::Text(json!({ "type": "pong" }).to_string().into()))
+                    .await?;
+            }
+            "error" => anyhow::bail!("streamx handshake error: {}", value["payload"]),
+            _ => {}
+        }
+    }
+
+    ws.send(WsMessage::Text(subscription_frame(&channel_id).into()))
+        .await?;
+    connected.store(true, Ordering::Relaxed);
+    let _ = tx.send(ProviderEvent::Status(index, ConnectionStatus::Connected));
+    ctx.request_repaint();
+
+    // Subscribe first, then backfill: frames that arrive while history is in
+    // flight stay queued in the socket and are processed right after.
+    match client.history(&channel_id, 500).await {
+        Ok(history) => {
+            let _ = tx.send(ProviderEvent::History(history));
+            ctx.request_repaint();
+        }
+        Err(err) => tracing::warn!("streamx history: {err:#}"),
+    }
+
+    let _ = &spec;
+    let mut last_frame = Instant::now();
+    let mut next_ping = Instant::now() + PING_EVERY;
+    loop {
+        let now = Instant::now();
+        if now.duration_since(last_frame) > SILENCE_LIMIT {
+            anyhow::bail!("streamx молчит дольше {} секунд", SILENCE_LIMIT.as_secs());
+        }
+        if now >= next_ping {
+            ws.send(WsMessage::Text(json!({ "type": "ping" }).to_string().into()))
+                .await?;
+            next_ping = now + PING_EVERY;
+        }
+
+        let wait = (next_ping - now).max(Duration::from_secs(1));
+        let frame = match tokio::time::timeout(wait, ws.next()).await {
+            Err(_) => continue,
+            Ok(None) => anyhow::bail!("streamx закрыл соединение"),
+            Ok(Some(frame)) => frame?,
+        };
+        last_frame = Instant::now();
+
+        let text = text_frame(frame)?;
         let value: Value = match serde_json::from_str(&text) {
             Ok(value) => value,
             Err(_) => continue,
         };
 
         match value["type"].as_str().unwrap_or_default() {
-            "connection_ack" => {
-                ws.send(WsMessage::Text(subscription_frame(&channel_id).into()))
-                    .await?;
-                let _ = tx.send(ProviderEvent::Status(index, ConnectionStatus::Connected));
-                ctx.request_repaint();
-            }
             "next" => {
-                if let Some(message) = map_message(&value["payload"]["data"]["chatMessages"]) {
+                if let Some(message) = map_message(
+                    &value["payload"]["data"]["chatMessages"],
+                    &channel_id,
+                ) {
                     let _ = tx.send(ProviderEvent::Message(message));
                     ctx.request_repaint();
                 }
@@ -293,27 +379,48 @@ async fn session(
     }
 }
 
+fn text_frame(frame: WsMessage) -> anyhow::Result<String> {
+    match frame {
+        WsMessage::Text(text) => Ok(text.to_string()),
+        WsMessage::Binary(bytes) => Ok(String::from_utf8_lossy(&bytes).to_string()),
+        WsMessage::Close(_) => anyhow::bail!("streamx закрыл соединение"),
+        _ => Ok(String::new()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    fn fixture() -> Value {
+        serde_json::from_str(include_str!("fixtures/streamx_messages.json")).unwrap()
+    }
+
     #[test]
     fn maps_segments_and_protocol_relative_urls() {
-        let v: Value =
-            serde_json::from_str(include_str!("fixtures/streamx_messages.json")).unwrap();
-        let msgs: Vec<Message> = v.as_array().unwrap().iter().filter_map(map_message).collect();
+        let v = fixture();
+        let msgs: Vec<Message> = v
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|value| map_message(value, "le-xot"))
+            .collect();
         assert_eq!(msgs[0].author.name, "zxcpuk");
         assert_eq!(msgs[0].author.color, Some([0xFF, 0xB8, 0x6C]));
+        assert_eq!(msgs[0].channel, "le-xot");
         assert!(matches!(&msgs[0].parts[0], Part::Text(t) if t == "а сам файсит"));
         match &msgs[1].parts[0] {
             Part::Emote(e) => {
                 assert!(e.uri.starts_with("https://cdn.7tv.app/"));
+                assert_eq!(e.name, "aRolf");
                 assert_eq!(e.aspect, 2.0);
             }
             other => panic!("expected emote, got {other:?}"),
         }
         assert!(matches!(&msgs[2].parts[1], Part::Text(t) if t == " смотри "));
-        assert!(matches!(&msgs[2].parts[2], Part::Link(u) if u == "https://github.com/emilk/egui"));
+        assert!(
+            matches!(&msgs[2].parts[2], Part::Link(u) if u == "https://github.com/emilk/egui")
+        );
         assert!(matches!(&msgs[2].parts[3], Part::Text(t) if t == "!"));
     }
 
@@ -344,6 +451,10 @@ mod tests {
         assert_eq!(id, "30b9ec57-9ef7-4992-b114-f0f380bc60f6");
         let history = client.history(&id, 5).await.unwrap();
         assert!(!history.is_empty());
-        assert!(history.iter().all(|message| message.platform == Platform::Streamx));
+        assert!(
+            history
+                .iter()
+                .all(|message| message.platform == Platform::Streamx)
+        );
     }
 }

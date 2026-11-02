@@ -44,6 +44,15 @@ impl Timeline {
     }
 
     pub fn push_note(&mut self, text: String, ts_ms: i64) {
+        if let Some(Entry::Note {
+            text: last,
+            ts_ms: last_ts,
+        }) = self.entries.back()
+            && *last == text
+            && ts_ms.saturating_sub(*last_ts) < 60_000
+        {
+            return;
+        }
         self.insert_sorted(Entry::Note { text, ts_ms });
     }
 
@@ -80,6 +89,7 @@ mod tests {
         Message {
             id: id.to_string(),
             platform,
+            channel: "test".into(),
             author: Author {
                 name: "tester".into(),
                 color: None,
@@ -105,6 +115,16 @@ mod tests {
         t.insert_sorted(Entry::Msg(msg_at(Platform::Twitch, "1", 100)));
         t.insert_sorted(Entry::Msg(msg_at(Platform::Streamx, "1", 101)));
         t.insert_sorted(Entry::Msg(msg_at(Platform::Twitch, "1", 102)));
+        assert_eq!(t.len(), 2);
+    }
+
+    #[test]
+    fn consecutive_identical_notes_collapse() {
+        let mut t = Timeline::new();
+        t.push_note("связь потеряна".into(), 1_000);
+        t.push_note("связь потеряна".into(), 2_000);
+        assert_eq!(t.len(), 1);
+        t.push_note("связь потеряна".into(), 120_000);
         assert_eq!(t.len(), 2);
     }
 

@@ -56,7 +56,11 @@ pub fn split_parts(text: &str, native: &[NativeEmote], catalog: &EmoteCatalog) -
         if emote.start > emote.end {
             continue;
         }
-        for slot in owner.iter_mut().take((emote.end + 1).min(len)).skip(emote.start) {
+        for slot in owner
+            .iter_mut()
+            .take(emote.end.saturating_add(1).min(len))
+            .skip(emote.start)
+        {
             *slot = Some(idx);
         }
     }
@@ -77,6 +81,7 @@ pub fn split_parts(text: &str, native: &[NativeEmote], catalog: &EmoteCatalog) -
             }
             debug_assert!(i > start);
             parts.push(Part::Emote(EmotePart {
+                name: chars[start..i].iter().collect(),
                 uri: native[emote_idx].uri.clone(),
                 aspect: 1.0,
                 zero_width: false,
@@ -112,6 +117,7 @@ fn push_text(parts: &mut Vec<Part>, text: String) {
 fn emit_token(parts: &mut Vec<Part>, token: &str, catalog: &EmoteCatalog) {
     if let Some(emote) = catalog.get(token) {
         parts.push(Part::Emote(EmotePart {
+            name: emote.name.clone(),
             uri: emote.uri.clone(),
             aspect: emote.aspect,
             zero_width: emote.zero_width,
@@ -127,6 +133,7 @@ fn emit_token(parts: &mut Vec<Part>, token: &str, catalog: &EmoteCatalog) {
         let core: String = token.chars().take(core_len).collect();
         if let Some(emote) = catalog.get(&core) {
             parts.push(Part::Emote(EmotePart {
+                name: emote.name.clone(),
                 uri: emote.uri.clone(),
                 aspect: emote.aspect,
                 zero_width: emote.zero_width,
@@ -275,6 +282,7 @@ mod tests {
     #[test]
     fn emote_part_helper_is_constructible() {
         let part = EmotePart {
+            name: "x".into(),
             uri: "u".into(),
             aspect: 1.0,
             zero_width: false,

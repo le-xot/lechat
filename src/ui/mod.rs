@@ -8,14 +8,13 @@ pub const EMOTE_LINE_FACTOR: f32 = 1.5;
 
 pub fn emote_size(line_height: f32, aspect: f32) -> egui::Vec2 {
     let height = line_height * EMOTE_LINE_FACTOR;
-    egui::vec2(height * aspect.max(0.1), height)
+    egui::vec2(height * aspect.clamp(0.1, 8.0), height)
 }
 
 pub fn near_bottom(offset_from_end: f32) -> bool {
     offset_from_end <= NEAR_BOTTOM_PX
 }
 
-#[allow(dead_code)]
 pub fn zero_width_rect(
     previous: Option<egui::Rect>,
     cursor: egui::Pos2,

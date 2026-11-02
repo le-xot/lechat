@@ -35,6 +35,7 @@ pub struct Author {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct EmotePart {
+    pub name: String,
     pub uri: String,
     pub aspect: f32,
     pub zero_width: bool,
@@ -51,6 +52,7 @@ pub enum Part {
 pub struct Message {
     pub id: String,
     pub platform: Platform,
+    pub channel: String,
     pub author: Author,
     pub parts: Vec<Part>,
     pub ts_ms: i64,

@@ -1,5 +1,6 @@
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use futures_util::{SinkExt, StreamExt};
 use tokio::sync::mpsc::UnboundedSender;
@@ -9,8 +10,13 @@ use crate::emotes::{EmoteCatalog, split_parts};
 use crate::model::{Author, Message, NativeEmote, Platform};
 use crate::providers::{ConnectionStatus, ProviderEvent};
 use crate::twitch::irc::{IrcLine, is_ping, parse_emotes_tag, parse_line, parse_room_id};
+use crate::util::parse_hex_color;
 
 const IRC_URL: &str = "wss://irc-ws.chat.twitch.tv:443";
+/// Twitch sends its own keepalive roughly every five minutes; we ping much
+/// more often and treat a long silence as a dead connection.
+const PING_EVERY: Duration = Duration::from_secs(60);
+const SILENCE_LIMIT: Duration = Duration::from_secs(300);
 
 pub fn handshake_lines(channel: &str, nick: &str) -> Vec<String> {
     vec![
@@ -35,6 +41,7 @@ pub fn line_to_message(line: &IrcLine, catalog: &EmoteCatalog) -> Option<Message
         return None;
     }
 
+    let chars: Vec<char> = text.chars().collect();
     let native: Vec<NativeEmote> = parse_emotes_tag(
         line.tags
             .get("emotes")
@@ -81,9 +88,18 @@ pub fn line_to_message(line: &IrcLine, catalog: &EmoteCatalog) -> Option<Message
         .get("color")
         .and_then(|value| parse_hex_color(value));
 
+    let channel = line
+        .params
+        .first()
+        .map(|name| name.trim_start_matches('#').to_string())
+        .unwrap_or_default();
+
+    let _ = chars;
+
     Some(Message {
         id,
         platform: Platform::Twitch,
+        channel,
         author: Author {
             name: author_name,
             color,
@@ -91,17 +107,6 @@ pub fn line_to_message(line: &IrcLine, catalog: &EmoteCatalog) -> Option<Message
         parts: split_parts(text, &native, catalog),
         ts_ms,
     })
-}
-
-pub fn parse_hex_color(value: &str) -> Option<[u8; 3]> {
-    let hex = value.trim().strip_prefix('#')?;
-    if hex.len() != 6 {
-        return None;
-    }
-    let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
-    let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
-    let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
-    Some([r, g, b])
 }
 
 pub async fn run(
@@ -112,22 +117,35 @@ pub async fn run(
     ctx: egui::Context,
 ) {
     let mut attempt = 0u32;
+    let connected = Arc::new(AtomicBool::new(false));
     loop {
         if tx.is_closed() {
             return;
         }
         let _ = tx.send(ProviderEvent::Status(index, ConnectionStatus::Connecting));
-        match session(index, &channel, &catalog, &tx, &ctx).await {
-            Ok(()) => attempt = 0,
+        ctx.request_repaint();
+        match session(index, &channel, &catalog, &tx, &ctx, &connected).await {
+            Ok(()) => {}
             Err(err) => {
                 let _ = tx.send(ProviderEvent::Error(index, format!("{err:#}")));
+                if connected.swap(false, Ordering::Relaxed) {
+                    let _ = tx.send(ProviderEvent::Note(
+                        "соединение с Twitch потеряно, часть сообщений пропущена".to_string(),
+                    ));
+                }
             }
         }
         if tx.is_closed() {
             return;
         }
-        attempt += 1;
+        if !connected.load(Ordering::Relaxed) {
+            attempt += 1;
+        } else {
+            attempt = 0;
+            connected.store(false, Ordering::Relaxed);
+        }
         let _ = tx.send(ProviderEvent::Status(index, ConnectionStatus::Reconnecting));
+        ctx.request_repaint();
         tokio::time::sleep(next_backoff(attempt)).await;
     }
 }
@@ -138,22 +156,43 @@ async fn session(
     catalog: &Arc<RwLock<EmoteCatalog>>,
     tx: &UnboundedSender<ProviderEvent>,
     ctx: &egui::Context,
+    connected: &AtomicBool,
 ) -> anyhow::Result<()> {
-    let (mut ws, _) = tokio_tungstenite::connect_async(IRC_URL).await?;
+    let (mut ws, _) = tokio::time::timeout(
+        Duration::from_secs(20),
+        tokio_tungstenite::connect_async(IRC_URL),
+    )
+    .await
+    .map_err(|_| anyhow::anyhow!("таймаут подключения к Twitch"))??;
+
     let nick = format!("justinfan{}", std::process::id());
     for line in handshake_lines(channel, &nick) {
         ws.send(WsMessage::Text(line.into())).await?;
     }
 
     let mut buffer = String::new();
+    let mut last_frame = Instant::now();
+    let mut next_ping = Instant::now() + PING_EVERY;
+
     loop {
-        let frame = tokio::time::timeout(Duration::from_secs(150), ws.next())
-            .await
-            .map_err(|_| anyhow::anyhow!("таймаут соединения с Twitch"))?;
-        let Some(frame) = frame else {
-            anyhow::bail!("Twitch закрыл соединение");
+        let now = Instant::now();
+        if now.duration_since(last_frame) > SILENCE_LIMIT {
+            anyhow::bail!("Twitch молчит дольше {} секунд", SILENCE_LIMIT.as_secs());
+        }
+        if now >= next_ping {
+            ws.send(WsMessage::Text("PING :tmi.twitch.tv".into()))
+                .await?;
+            next_ping = now + PING_EVERY;
+        }
+
+        let wait = (next_ping - now).max(Duration::from_secs(1));
+        let frame = match tokio::time::timeout(wait, ws.next()).await {
+            Err(_) => continue,
+            Ok(None) => anyhow::bail!("Twitch закрыл соединение"),
+            Ok(Some(frame)) => frame?,
         };
-        let frame = frame?;
+        last_frame = Instant::now();
+
         let text = match frame {
             WsMessage::Text(text) => text.to_string(),
             WsMessage::Binary(bytes) => String::from_utf8_lossy(&bytes).to_string(),
@@ -175,6 +214,7 @@ async fn session(
             }
 
             if line.command == "366" {
+                connected.store(true, Ordering::Relaxed);
                 let _ = tx.send(ProviderEvent::Status(index, ConnectionStatus::Connected));
                 ctx.request_repaint();
                 continue;
@@ -224,9 +264,9 @@ mod tests {
     #[test]
     fn converts_privmsg_to_message() {
         let raw = "@color=#2E8B57;display-name=DavidzusTV;id=abc;tmi-sent-ts=1793656722613 :davidzustv!davidzustv@davidzustv.tmi.twitch.tv PRIVMSG #xqc :TWEAK SHIIII";
-        let msg =
-            line_to_message(&parse_line(raw).unwrap(), &EmoteCatalog::new()).unwrap();
+        let msg = line_to_message(&parse_line(raw).unwrap(), &EmoteCatalog::new()).unwrap();
         assert_eq!(msg.id, "abc");
+        assert_eq!(msg.channel, "xqc");
         assert_eq!(msg.author.name, "DavidzusTV");
         assert_eq!(msg.author.color, Some([0x2e, 0x8b, 0x57]));
         assert_eq!(msg.ts_ms, 1793656722613);

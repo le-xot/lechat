@@ -21,6 +21,7 @@ pub fn entry_ui(ui: &mut egui::Ui, entry: &Entry, channel: &str) {
 
 pub fn message_ui(ui: &mut egui::Ui, message: &Message, channel: &str) {
     let line_height = ui.text_style_height(&egui::TextStyle::Body);
+    let mut previous_emote: Option<egui::Rect> = None;
 
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
@@ -65,13 +66,49 @@ pub fn message_ui(ui: &mut egui::Ui, message: &Message, channel: &str) {
                 Part::Emote(emote) => {
                     let size = ui::emote_size(line_height, emote.aspect);
                     if emote.zero_width {
-                        ui.add(egui::Image::new(emote.uri.clone()).fit_to_exact_size(size * 0.7));
-                        ui.add_space(-size.x * 0.45);
+                        if let Some(previous) = previous_emote
+                            && paint_zero_width(ui, emote, previous, line_height)
+                        {
+                            continue;
+                        }
+                        ui.add(
+                            egui::Image::new(emote.uri.clone())
+                                .fit_to_exact_size(size * 0.7)
+                                .alt_text(emote.name.clone()),
+                        );
                     } else {
-                        ui.add(egui::Image::new(emote.uri.clone()).fit_to_exact_size(size));
+                        let response = ui.add(
+                            egui::Image::new(emote.uri.clone())
+                                .fit_to_exact_size(size)
+                                .alt_text(emote.name.clone()),
+                        );
+                        previous_emote = Some(response.rect);
                     }
                 }
             }
         }
     });
+}
+
+/// Zero-width emotes layer on top of the previous one and advance no space.
+fn paint_zero_width(
+    ui: &mut egui::Ui,
+    emote: &crate::model::EmotePart,
+    previous: egui::Rect,
+    line_height: f32,
+) -> bool {
+    let rect = ui::zero_width_rect(Some(previous), ui.cursor().min, line_height);
+    let image = egui::Image::new(emote.uri.clone());
+    let Ok(egui::load::TexturePoll::Ready { texture }) =
+        image.load_for_size(ui.ctx(), rect.size())
+    else {
+        return false;
+    };
+    ui.painter().image(
+        texture.id,
+        rect,
+        egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+        egui::Color32::WHITE,
+    );
+    true
 }

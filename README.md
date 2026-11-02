@@ -46,7 +46,7 @@ message time. Add more panels to follow more channels.
 
 - **F5** — reconnect every source.
 - **анимация** checkbox in the header — animate 7TV emotes (off by default: animated
-  emotes repaint the whole feed and cost CPU).
+  emotes repaint the whole feed and cost CPU). Toggling applies to already loaded emotes.
 - Scroll up to pause auto-follow; the “↓ N новых” button jumps back to the live edge.
 
 ## Known limitations
@@ -57,5 +57,5 @@ message time. Add more panels to follow more channels.
   client reconnects with backoff and re-fetches history (limited to 500 messages).
 - Badges and avatars are not rendered: Twitch only sends badge names, and resolving
   them requires a Helix client ID/secret.
-- Zero-width emotes are drawn inline and slightly smaller rather than layered exactly
-  like the 7TV browser extension.
+- Toggling **анимация** does not re-decode already cached frames; it switches between
+  the cached animation and its first frame.
