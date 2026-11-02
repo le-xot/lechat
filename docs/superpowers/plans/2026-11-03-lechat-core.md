@@ -16,7 +16,8 @@
 - Только чтение: никаких мутаций, отправки, авторизации.
 - Никаких секретов и токенов в конфиге и логах.
 - Лимит истории — 500 сообщений на панель, дедуп по `id`.
-- Минимальный размер окна 720×520, минимальная ширина панели 280px.
+- Минимальный размер окна 720×520; 280px — мягкий минимум ширины панели (если окно уже `N*280`, панели делятся поровну).
+- История streamx запрашивается с `limit = 500`.
 - Высота эмоута = 1.5 × высоты строки текста, ширина по пропорции исходника.
 - Порог «прилипания к низу» — 64px.
 - Конфиг: `~/.config/lechat/config.toml`.
@@ -112,7 +113,7 @@ git commit -m "feat: project scaffold and panel config"
 - Test: `src/emotes/mod.rs`
 
 **Interfaces:**
-- Produces: `Platform`, `Author { name, color: Option<[u8; 3]> }`, `Part::{Text, Emote, Link}`, `EmotePart { uri, aspect: f32, zero_width: bool }`, `Message { id, platform, author, parts, ts_ms: i64 }`, `NativeEmote { start: usize, end: usize, uri: String }` (индексы в символах, включительно), `EmoteInfo { name, uri, aspect, zero_width }`, `EmoteCatalog::{new, insert, get, merged}`, `split_parts(text: &str, native: &[NativeEmote], catalog: &EmoteCatalog) -> Vec<Part>`.
+- Produces: `Platform`, `Author { name, color: Option<[u8; 3]> }`, `Part::{Text, Emote, Link}`, `EmotePart { uri, aspect: f32, zero_width: bool }`, `Message { id, platform, author, parts, ts_ms: i64 }`, `NativeEmote { start: usize, end: usize, uri: String }` (индексы в символах, включительно), `EmoteInfo { name, uri, aspect, zero_width }`, `EmoteCatalog::{new, insert, get, merged}`, `split_parts(text: &str, native: &[NativeEmote], catalog: &EmoteCatalog) -> Vec<Part>`, `Entry::{Msg(Message), Note { id: String, text: String }}`.
 - Consumes: ничего.
 
 - [ ] **Step 1: Write the failing tests**
@@ -152,6 +153,12 @@ fn native_emote_wins_over_catalog() {
 }
 
 #[test]
+fn autolinks_plain_urls_and_trims_punctuation() {
+    let parts = split_parts("клип https://clips.twitch.tv/abc, смотри", &[], &EmoteCatalog::new());
+    assert!(parts.iter().any(|p| matches!(p, Part::Link(u) if u == "https://clips.twitch.tv/abc")));
+}
+
+#[test]
 fn cyrillic_offsets_are_char_based() {
     let native = vec![NativeEmote { start: 6, end: 10, uri: "https://cdn/twitch/2.0".into() }];
     let parts = split_parts("привет Kappa", &native, &EmoteCatalog::new());
@@ -177,7 +184,7 @@ Expected: FAIL — модуль не существует.
 
 - [ ] **Step 3: Implement**
 
-Разбить текст на токены `split_inclusive(char::is_whitespace)`; смещения считать в символах (`char_indices`), не в байтах. Если токен пересекается с `NativeEmote` — `Part::Emote` с нативным URL. Иначе `catalog.get(token)`. Остальное — `Text`. `merged(channel, global)` — сначала global, поверх channel.
+Разбить текст на токены `split_inclusive(char::is_whitespace)`; смещения считать в символах (`char_indices`), не в байтах. Если токен пересекается с `NativeEmote` — `Part::Emote` с нативным URL. Иначе `catalog.get(token)`. Остальное — `Text`. `http://`/`https://` в тексте дают `Part::Link` (хвостовые `.,!?)]` остаются текстом). `merged(channel, global)` — сначала global, поверх channel.
 
 - [ ] **Step 4: Run tests**
 
@@ -270,7 +277,7 @@ git commit -m "feat: twitch IRC line parser"
 
 **Interfaces:**
 - Consumes: `parse_line`, `split_parts`, `EmoteCatalog`, `ProviderEvent`.
-- Produces: `ProviderEvent::{Status(ConnectionStatus), Message(Message), History(Vec<Message>), RoomId(String), Error(String)}`, `ConnectionStatus::{Connecting, Connected, Reconnecting, Failed}`, `twitch::run(panel_id: usize, channel: String, catalog: Arc<RwLock<EmoteCatalog>>, tx: UnboundedSender<ProviderEvent>, egui_ctx: egui::Context)`, `twitch::handshake_lines(channel: &str, nick: &str) -> Vec<String>`, `twitch::line_to_message(&IrcLine, &EmoteCatalog) -> Option<Message>`, `twitch::next_backoff(attempt: u32) -> Duration`.
+- Produces: `ProviderEvent::{Status(ConnectionStatus), Message(usize, Message), History(usize, Vec<Message>), Note(usize, String), RoomId(usize, String), Error(usize, String)}`, `ConnectionStatus::{Connecting, Connected, Reconnecting, Failed}`, `twitch::run(panel_id: usize, channel: String, catalog: Arc<RwLock<EmoteCatalog>>, tx: UnboundedSender<ProviderEvent>, egui_ctx: egui::Context)`, `twitch::handshake_lines(channel: &str, nick: &str) -> Vec<String>`, `twitch::line_to_message(&IrcLine, &EmoteCatalog) -> Option<Message>`, `twitch::next_backoff(attempt: u32) -> Duration`. Каталог — свой на панель, `run` только читает его.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -334,7 +341,7 @@ git commit -m "feat: anonymous twitch IRC provider with reconnect"
 
 **Interfaces:**
 - Consumes: `Message`, `Part`, `EmotePart`, `ProviderEvent`.
-- Produces: `StreamxClient { base_url: String }` с `channel_id(&self, name: &str) -> Result<String>`, `history(&self, id: &str, limit: u32) -> Result<Vec<Message>>`, `emotes(&self, id: &str) -> Result<Vec<EmoteInfo>>`; `streamx::run(panel_id, spec, tx, egui_ctx)`; `streamx::map_message(&serde_json::Value) -> Option<Message>`; `streamx::subscription_frame(channel_id: &str) -> String`; `streamx::dedupe_append(&mut VecDeque<Message>, Vec<Message>)`.
+- Produces: `StreamxClient { base_url: String }` с `channel_id(&self, name: &str) -> Result<String>`, `history(&self, id: &str, limit: u32) -> Result<Vec<Message>>`, `emotes(&self, id: &str) -> Result<Vec<EmoteInfo>>`; `streamx::run(panel_id, spec, tx, egui_ctx)`; `streamx::map_message(&serde_json::Value) -> Option<Message>`; `streamx::subscription_frame(channel_id: &str) -> String`; `streamx::merge_history(&mut VecDeque<Message>, Vec<Message>)`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -361,9 +368,17 @@ fn subscription_frame_is_graphql_transport_ws() {
 }
 
 #[test]
-fn dedupe_append_skips_known_ids_and_caps_at_500() {
-    let mut q: VecDeque<Message> = (0..500).map(|i| msg(&format!("old{i}"))).collect();
-    dedupe_append(&mut q, vec![msg("old499"), msg("new1")]);
+fn merge_history_orders_by_timestamp_and_dedupes() {
+    let mut q: VecDeque<Message> = VecDeque::from(vec![msg_at("live", 200)]);
+    merge_history(&mut q, vec![msg_at("old", 100), msg_at("live", 200)]);
+    let ids: Vec<_> = q.iter().map(|m| m.id.as_str()).collect();
+    assert_eq!(ids, vec!["old", "live"]);
+}
+
+#[test]
+fn merge_history_caps_at_500() {
+    let mut q: VecDeque<Message> = (0..500).map(|i| msg_at(&format!("old{i}"), i)).collect();
+    merge_history(&mut q, vec![msg_at("new1", 501)]);
     assert_eq!(q.len(), 500);
     assert_eq!(q.back().unwrap().id, "new1");
     assert!(!q.iter().any(|m| m.id == "old0"));
@@ -377,7 +392,7 @@ Expected: FAIL.
 
 - [ ] **Step 3: Implement**
 
-HTTP-запросы — `reqwest::Client` c JSON-body `{"query": ..., "variables": ...}` на `{base}/api/query`. Запросы: `fetchUserByName`, `chatMessagesLatest`, `getEmotes`. WS: `connect_async` на `wss://{host}/api/query` (хост из `base_url`), `connection_init` → ждать `connection_ack` → `subscription_frame` → на `next` парсить `payload.data.chatMessages`. Реконнект: после `connection_ack` заново `history` и `dedupe_append`. Протокол-относительный URL эмоута: `if uri.starts_with("//") { format!("https:{uri}") }`.
+HTTP-запросы — `reqwest::Client` c JSON-body `{"query": ..., "variables": ...}` на `{base}/api/query`. Запросы: `fetchUserByName`, `chatMessagesLatest` (`limit = 500`), `getEmotes`. WS: `connect_async` на `wss://{host}/api/query` (хост из `base_url`), `connection_init` → ждать `connection_ack` → `subscription_frame` → на `next` парсить `payload.data.chatMessages`. Реконнект: после `connection_ack` живые кадры копятся в буфере, запрашивается история, `merge_history` сливает её по `ts_ms` и дедупу по `id`, затем буфер доливается; если история не пересекается с последним известным `id` — `ProviderEvent::Note("часть сообщений пропущена")`. Протокол-относительный URL эмоута: `if uri.starts_with("//") { format!("https:{uri}") }`.
 
 - [ ] **Step 4: Run tests**
 
@@ -472,8 +487,8 @@ git commit -m "feat: 7TV emote catalog and animated webp loader"
 - Test: `src/ui/mod.rs`, `src/app.rs`
 
 **Interfaces:**
-- Consumes: `Message`, `Part`, `PanelCfg`, `ConnectionStatus`.
-- Produces: `ui::emote_size(line_height: f32, aspect: f32) -> egui::Vec2`, `ui::near_bottom(offset_from_end: f32) -> bool`, `ui::splitter::clamp_fractions(fractions: &mut [f32], idx: usize, delta: f32, min_px: f32, total_px: f32)`, `Pane { spec, messages: VecDeque<Message>, status, last_error, unread, follow }`, `App { panes: Vec<Pane> }` + `App::apply_event(&mut self, ProviderEvent)`.
+- Consumes: `Message`, `Part`, `Entry`, `PanelCfg`, `ConnectionStatus`.
+- Produces: `ui::emote_size(line_height: f32, aspect: f32) -> egui::Vec2`, `ui::zero_width_rect(prev: Option<egui::Rect>, cursor: egui::Pos2, line_height: f32) -> egui::Rect`, `ui::near_bottom(offset_from_end: f32) -> bool`, `ui::splitter::clamp_fractions(fractions: &mut [f32], idx: usize, delta: f32, min_px: f32, total_px: f32)`, `Pane { spec, entries: VecDeque<Entry>, status, last_error, unread, follow }`, `App { panes: Vec<Pane> }` + `App::apply_event(&mut self, ProviderEvent)`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -501,13 +516,21 @@ fn splitter_respects_min_pane_width() {
 }
 
 #[test]
+fn zero_width_overlays_previous_emote() {
+    let prev = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(90.0, 30.0));
+    let r = zero_width_rect(Some(prev), egui::pos2(100.0, 0.0), 30.0);
+    assert_eq!(r.center(), prev.center());
+    assert!(r.width() < prev.width());
+}
+
+#[test]
 fn apply_event_routes_message_to_pane_and_bumps_unread() {
     let mut app = App::new(cfg_with_two_panels());
     app.panes[0].follow = false;
     app.apply_event(ProviderEvent::Message(0, msg("m1")));
-    assert_eq!(app.panes[0].messages.len(), 1);
+    assert_eq!(app.panes[0].entries.len(), 1);
     assert_eq!(app.panes[0].unread, 1);
-    assert_eq!(app.panes[1].messages.len(), 0);
+    assert_eq!(app.panes[1].entries.len(), 0);
 }
 ```
 
@@ -518,7 +541,7 @@ Expected: FAIL.
 
 - [ ] **Step 3: Implement**
 
-`Pane::ui(ui, &mut self)` — шапка (имя платформы, канал, цветная точка статуса, тултип с ошибкой), затем `ScrollArea::vertical().stick_to_bottom(self.follow)`, строки сообщений. Строка: `ЧЧ:ММ` (chrono, локальная зона), ник цветом (`Author.color`), части — текст/эмодзи/ссылки. Эмодзи через `ui.image(uri)` с размером `emote_size`; zero-width — без отступа. Прокрутка: если `follow` выключен показывается кнопка «↓ N новых», клик — `stick_to_bottom` на следующий кадр. Панели: `ui.horizontal` с собственными фракциями ширины и перетаскиваемыми разделителями (`clamp_fractions`). Минимальный размер окна задаётся в `NativeOptions`. Тема — тёмная, шрифт по умолчанию 14.
+`Pane::ui(ui, &mut self)` — шапка (имя платформы, канал, цветная точка статуса, тултип с ошибкой), затем `ScrollArea::vertical().stick_to_bottom(self.follow)`, строки `Entry`. Строка сообщения: `ЧЧ:ММ` (chrono, локальная зона), ник цветом (`Author.color`), части — текст/эмодзи/ссылки. Эмодзи через `ui.image(uri)` с размером `emote_size`; zero-width рисуется `ui.painter().image()` в прямоугольнике `zero_width_rect` поверх предыдущего эмоута (в начале строки — инлайн уменьшенным). `Entry::Note` — серая курсивная строка по центру. Прокрутка: если `follow` выключен показывается кнопка «↓ N новых», клик — `stick_to_bottom` на следующий кадр. Панели: `ui.horizontal` с собственными фракциями ширины и перетаскиваемыми разделителями (`clamp_fractions`); 280px — мягкий минимум, при нехватке места фракции равняются. Минимальный размер окна задаётся в `NativeOptions`. Тема — тёмная, шрифт по умолчанию 14.
 
 - [ ] **Step 4: Run tests**
 
@@ -562,7 +585,7 @@ Expected: FAIL.
 
 - [ ] **Step 3: Implement**
 
-`main`: `tracing_subscriber`, `egui_extras::install_image_loaders(&cc.egui_ctx)`, регистрация `WebpAnimationLoader`, `tokio::runtime::Runtime`, `eframe::run_native` с `viewport` (720×520 min, 1200×800 default), `persist_window`. `App::new`: создать панели из конфига, спавнить провайдеры, получить `Receiver<ProviderEvent>`; если конфиг битый — панель с ошибкой вместо паники. `App::update`: вычитать все события, `apply_event`, `F5` → реконнект (переспавнить таски), сохранять геометрию окна. 7TV-каталог грузится в Twitch-провайдере после `RoomId`, кладётся в общий `Arc<RwLock<EmoteCatalog>>`.
+`main`: `tracing_subscriber`, `egui_extras::install_image_loaders(&cc.egui_ctx)`, регистрация `WebpAnimationLoader`, `tokio::runtime::Runtime`, `eframe::run_native` с `viewport` (720×520 min, 1200×800 default), `persist_window`. `App::new`: создать панели из конфига, для каждой — свой `Arc<RwLock<EmoteCatalog>>`, спавнить провайдеры, получить `Receiver<ProviderEvent>`; если конфиг битый — панель с ошибкой вместо паники. `App::update`: вычитать все события, `apply_event`, `F5` → реконнект (переспавнить таски), сохранять геометрию окна. 7TV-каталог грузится отдельной таской в панель после `RoomId`; ошибка загрузки не блокирует чат (эмоуты текстом), повтор — реконнект, F5, отложенный через 60с.
 
 - [ ] **Step 4: Verify build, tests, clippy**
 
