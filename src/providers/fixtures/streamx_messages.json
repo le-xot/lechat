@@ -1,0 +1,41 @@
+[
+  {
+    "id": "fbc80891-56fd-486d-8235-be0aee0698c4",
+    "createdAt": "2026-11-02T20:51:04.692022Z",
+    "senderColor": "#FFB86C",
+    "sender": { "displayName": "zxcpuk" },
+    "segments": [
+      { "type": "TEXT", "content": "а сам файсит" }
+    ]
+  },
+  {
+    "id": "b70ea8fc-8e36-4200-ae87-317938e64cce",
+    "createdAt": "2026-11-02T20:51:36.679497Z",
+    "senderColor": "#50FA7B",
+    "sender": { "displayName": "etonepepega" },
+    "segments": [
+      {
+        "type": "EMOTE",
+        "content": "aRolf",
+        "emote": {
+          "id": "01GP9NJ1BR000C2D7AAJAGMZ97",
+          "name": "aRolf",
+          "url": "//cdn.7tv.app/emote/01GP9NJ1BR000C2D7AAJAGMZ97/1x.webp",
+          "width": 64,
+          "height": 32
+        }
+      }
+    ]
+  },
+  {
+    "id": "3ac351b6-d7d0-428d-ba31-8d40175bb4e2",
+    "createdAt": "2026-11-02T20:51:57.743220Z",
+    "sender": { "displayName": "Satont" },
+    "segments": [
+      { "type": "MENTION", "content": "@etonelexot" },
+      { "type": "TEXT", "content": " смотри " },
+      { "type": "LINK", "content": "https://github.com/emilk/egui" },
+      { "type": "WEIRD_FUTURE_TYPE", "content": "!" }
+    ]
+  }
+]

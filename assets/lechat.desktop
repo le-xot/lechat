@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=lechat
+Comment=Twitch and streamx chat in one window
+Exec=lechat
+Icon=lechat
+Terminal=false
+Categories=Network;Chat;
