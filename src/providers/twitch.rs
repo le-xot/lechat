@@ -6,7 +6,7 @@ use futures_util::{SinkExt, StreamExt};
 use tokio::sync::mpsc::UnboundedSender;
 use tokio_tungstenite::tungstenite::Message as WsMessage;
 
-use crate::emotes::{EmoteCatalog, split_parts};
+use crate::emotes::{EmoteCatalog, seventv, split_parts};
 use crate::model::{Author, Message, NativeEmote, Platform};
 use crate::providers::{ConnectionStatus, ProviderEvent};
 use crate::twitch::irc::{IrcLine, is_ping, parse_emotes_tag, parse_line, parse_room_id};
@@ -70,6 +70,66 @@ async fn fetch_recent_payload(
         anyhow::bail!("recent messages HTTP {status}");
     }
     Ok(response.json().await?)
+}
+
+async fn load_catalog(
+    http: &reqwest::Client,
+    room_id: &str,
+    catalog: &Arc<RwLock<EmoteCatalog>>,
+) {
+    let needed = catalog.read().unwrap().is_empty();
+    if !needed || room_id.is_empty() {
+        return;
+    }
+    let fetched = tokio::time::timeout(Duration::from_secs(15), async {
+        let channel = seventv::fetch_channel(http, room_id).await?;
+        let global = seventv::fetch_global(http).await?;
+        Ok::<_, anyhow::Error>(EmoteCatalog::merged(channel, global))
+    })
+    .await;
+    match fetched {
+        Ok(Ok(loaded)) => *catalog.write().unwrap() = loaded,
+        Ok(Err(err)) => tracing::warn!("7TV: {err:#}"),
+        Err(_) => tracing::warn!("7TV: таймаут загрузки каталога"),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn start_history(
+    channel: &str,
+    room_id: &str,
+    catalog: &Arc<RwLock<EmoteCatalog>>,
+    tx: &UnboundedSender<ProviderEvent>,
+    ctx: &egui::Context,
+    last_ts: &AtomicI64,
+    http: &reqwest::Client,
+) {
+    load_catalog(http, room_id, catalog).await;
+
+    let known = last_ts.load(Ordering::Relaxed);
+    let url = recent_messages_url(channel, (known > 0).then_some(known), HISTORY_LIMIT);
+    match fetch_recent_payload(http, &url).await {
+        Ok(payload) => {
+            let catalog = catalog.read().unwrap();
+            let mut history = parse_recent_messages(&payload, &catalog);
+            let emote_count = catalog.len();
+            drop(catalog);
+            if let Some(newest) = history.iter().map(|message| message.ts_ms).max() {
+                last_ts.fetch_max(newest, Ordering::Relaxed);
+            }
+            history.sort_by_key(|message| message.ts_ms);
+            if !history.is_empty() {
+                tracing::info!(
+                    "twitch history: {} сообщений, 7TV: {}",
+                    history.len(),
+                    emote_count
+                );
+                let _ = tx.send(ProviderEvent::History(history));
+                ctx.request_repaint();
+            }
+        }
+        Err(err) => tracing::warn!("twitch history: {err:#}"),
+    }
 }
 
 pub fn next_backoff(attempt: u32) -> Duration {
@@ -236,6 +296,9 @@ async fn session(
     }
 
     let mut buffer = String::new();
+    let mut joined = false;
+    let mut room_id: Option<String> = None;
+    let mut history_started = false;
     let mut last_frame = Instant::now();
     let mut next_ping = Instant::now() + PING_EVERY;
 
@@ -280,38 +343,25 @@ async fn session(
 
             if line.command == "366" {
                 connected.store(true, Ordering::Relaxed);
+                joined = true;
                 let _ = tx.send(ProviderEvent::Status(index, ConnectionStatus::Connected));
                 ctx.request_repaint();
-
-                let known = last_ts.load(Ordering::Relaxed);
-                let url = recent_messages_url(
-                    channel,
-                    (known > 0).then_some(known),
-                    HISTORY_LIMIT,
-                );
-                match fetch_recent_payload(http, &url).await {
-                    Ok(payload) => {
-                        let catalog = catalog.read().unwrap();
-                        let mut history = parse_recent_messages(&payload, &catalog);
-                        drop(catalog);
-                        if let Some(newest) = history.iter().map(|m| m.ts_ms).max() {
-                            last_ts.fetch_max(newest, Ordering::Relaxed);
-                        }
-                        history.sort_by_key(|message| message.ts_ms);
-                        if !history.is_empty() {
-                            tracing::info!("twitch history: {} сообщений", history.len());
-                            let _ = tx.send(ProviderEvent::History(history));
-                            ctx.request_repaint();
-                        }
-                    }
-                    Err(err) => tracing::warn!("twitch history: {err:#}"),
-                }
-                continue;
             }
 
-            if let Some(room_id) = parse_room_id(&line) {
-                let _ = tx.send(ProviderEvent::RoomId(index, room_id));
+            if let Some(id) = parse_room_id(&line) {
+                room_id.get_or_insert(id);
                 ctx.request_repaint();
+            }
+
+            if joined
+                && !history_started
+                && let Some(id) = room_id.as_deref()
+            {
+                history_started = true;
+                start_history(channel, id, catalog, tx, ctx, last_ts, http).await;
+            }
+
+            if line.command == "366" || parse_room_id(&line).is_some() {
                 continue;
             }
 

@@ -1,11 +1,10 @@
 use std::sync::{Arc, RwLock};
-use std::time::Duration;
 
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use tokio::task::JoinHandle;
 
 use crate::config::{Appearance, Config, PanelCfg, PanelKind};
-use crate::emotes::{EmoteCatalog, seventv};
+use crate::emotes::EmoteCatalog;
 use crate::model::{Entry, Platform};
 use crate::providers::{ConnectionStatus, ProviderEvent, streamx, twitch};
 use crate::ui::timeline::Timeline;
@@ -16,7 +15,6 @@ pub struct SourceState {
     pub status: ConnectionStatus,
     pub error: Option<String>,
     pub catalog: Arc<RwLock<EmoteCatalog>>,
-    pub catalog_loading: bool,
 }
 
 pub struct App {
@@ -28,7 +26,6 @@ pub struct App {
     runtime: tokio::runtime::Runtime,
     ctx: egui::Context,
     handles: Vec<Option<JoinHandle<()>>>,
-    http: reqwest::Client,
     pending_reconnects: Vec<bool>,
     spawn_enabled: bool,
     config: Config,
@@ -68,7 +65,6 @@ impl App {
                 status: ConnectionStatus::Connecting,
                 error: None,
                 catalog: Arc::new(RwLock::new(EmoteCatalog::new())),
-                catalog_loading: false,
             })
             .collect::<Vec<_>>();
         let pending_reconnects = vec![false; sources.len()];
@@ -83,11 +79,6 @@ impl App {
             runtime: tokio::runtime::Runtime::new().expect("tokio runtime"),
             ctx,
             handles: Vec::new(),
-            http: reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(15))
-                .connect_timeout(std::time::Duration::from_secs(10))
-                .build()
-                .unwrap_or_default(),
             pending_reconnects,
             spawn_enabled: false,
             config,
@@ -139,7 +130,6 @@ impl App {
         self.pending_reconnects.fill(true);
         for source in &mut self.sources {
             source.status = ConnectionStatus::Connecting;
-            source.catalog_loading = false;
         }
         self.spawn_all();
     }
@@ -176,7 +166,6 @@ impl App {
                     source.status = ConnectionStatus::Failed;
                 }
             }
-            ProviderEvent::RoomId(index, room_id) => self.spawn_catalog(index, room_id),
             ProviderEvent::Note(text) => {
                 let ts = chrono::Utc::now().timestamp_millis();
                 self.timeline.push_note(text, ts);
@@ -195,44 +184,7 @@ impl App {
         }
     }
 
-    fn spawn_catalog(&mut self, index: usize, room_id: String) {
-        let Some(source) = self.sources.get_mut(index) else {
-            return;
-        };
-        if source.catalog_loading {
-            return;
-        }
-        source.catalog_loading = true;
-        let catalog = source.catalog.clone();
-        let http = self.http.clone();
-        let ctx = self.ctx.clone();
 
-        self.runtime.spawn(async move {
-            for attempt in 0..3 {
-                let channel = seventv::fetch_channel(&http, &room_id).await;
-                let global = seventv::fetch_global(&http).await;
-                match (channel, global) {
-                    (Ok(channel), Ok(global)) => {
-                        let merged = EmoteCatalog::merged(channel, global);
-                        *catalog.write().unwrap() = merged;
-                        ctx.request_repaint();
-                        return;
-                    }
-                    (channel, global) => {
-                        let error = channel
-                            .err()
-                            .or_else(|| global.err())
-                            .map(|err| format!("{err:#}"))
-                            .unwrap_or_default();
-                        tracing::warn!("7TV: {error}");
-                        if attempt < 2 {
-                            tokio::time::sleep(Duration::from_secs(60)).await;
-                        }
-                    }
-                }
-            }
-        });
-    }
     fn settings_window(&mut self, ctx: &egui::Context) {
         if self.fonts.is_none() {
             self.fonts = Some(crate::settings::available_fonts());

@@ -37,6 +37,5 @@ pub enum ProviderEvent {
     Message(Message),
     History(Vec<Message>),
     Note(String),
-    RoomId(usize, String),
     Error(usize, String),
 }
