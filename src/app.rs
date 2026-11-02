@@ -356,12 +356,6 @@ impl eframe::App for App {
 }
 
 fn status_bar(ui: &mut egui::Ui, sources: &[SourceState], config_error: Option<&str>) -> bool {
-    let small_size = ui
-        .style()
-        .text_styles
-        .get(&egui::TextStyle::Small)
-        .map(|font| font.size)
-        .unwrap_or(11.0);
     ui.add_space(4.0);
     let mut gear_clicked = false;
     ui.horizontal_wrapped(|ui| {
@@ -396,11 +390,6 @@ fn status_bar(ui: &mut egui::Ui, sources: &[SourceState], config_error: Option<&
                 ),
             };
             response.on_hover_text(hint);
-            ui.label(
-                egui::RichText::new(source.status.label())
-                    .size(small_size)
-                    .color(egui::Color32::from_gray(140)),
-            );
             ui.separator();
         }
         if let Some(error) = config_error {
