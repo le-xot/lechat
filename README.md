@@ -29,6 +29,10 @@ Created on first run at `~/.config/lechat/config.toml`:
 width = 1100.0
 height = 760.0
 
+[appearance]
+font_size = 14.0
+# font_family = "Cantarell"   # omit for the built-in font
+
 [[panel]]
 kind = "twitch"
 channel = "etonelexot"
@@ -44,6 +48,8 @@ message time. Add more panels to follow more channels.
 
 ## Controls
 
+- **⚙** in the header — font size (11–24) and any installed font with Cyrillic
+  coverage; changes apply immediately and are saved to the config.
 - **F5** — reconnect every source.
 - Scroll up to pause auto-follow; the “↓ N новых” button jumps back to the live edge.
 

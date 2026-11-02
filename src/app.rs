@@ -4,7 +4,7 @@ use std::time::Duration;
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use tokio::task::JoinHandle;
 
-use crate::config::{Config, PanelCfg, PanelKind};
+use crate::config::{Appearance, Config, PanelCfg, PanelKind};
 use crate::emotes::{EmoteCatalog, seventv};
 use crate::model::{Entry, Platform};
 use crate::providers::{ConnectionStatus, ProviderEvent, streamx, twitch};
@@ -31,6 +31,12 @@ pub struct App {
     http: reqwest::Client,
     pending_reconnects: Vec<bool>,
     spawn_enabled: bool,
+    config: Config,
+    config_path: std::path::PathBuf,
+    appearance: Appearance,
+    fonts: Option<Vec<String>>,
+    font_query: String,
+    settings_open: bool,
 }
 
 impl App {
@@ -47,6 +53,7 @@ impl App {
         let mut app = Self::build(config, cc.egui_ctx.clone());
         app.config_error = config_error;
         app.spawn_enabled = true;
+        crate::settings::apply(&cc.egui_ctx, &app.appearance);
         app.spawn_all();
         app
     }
@@ -65,6 +72,7 @@ impl App {
             })
             .collect::<Vec<_>>();
         let pending_reconnects = vec![false; sources.len()];
+        let appearance = config.appearance.clone();
 
         Self {
             timeline: Timeline::new(),
@@ -82,6 +90,12 @@ impl App {
                 .unwrap_or_default(),
             pending_reconnects,
             spawn_enabled: false,
+            config,
+            config_path: Config::default_path(),
+            appearance,
+            fonts: None,
+            font_query: String::new(),
+            settings_open: false,
         }
     }
 
@@ -219,6 +233,94 @@ impl App {
             }
         });
     }
+    fn settings_window(&mut self, ctx: &egui::Context) {
+        if self.fonts.is_none() {
+            self.fonts = Some(crate::settings::available_fonts());
+        }
+        let fonts = self.fonts.clone().unwrap_or_default();
+
+        let mut appearance = self.appearance.clone();
+        let mut query = self.font_query.clone();
+        let mut open = self.settings_open;
+        let mut changed = false;
+
+        egui::Window::new("Настройки")
+            .open(&mut open)
+            .resizable(false)
+            .default_width(340.0)
+            .show(ctx, |ui| {
+                let size = ui.add(
+                    egui::Slider::new(&mut appearance.font_size, 11.0..=24.0)
+                        .step_by(0.5)
+                        .text("размер шрифта"),
+                );
+                changed |= size.changed();
+
+                ui.separator();
+                ui.label("шрифт");
+                let current = appearance
+                    .font_family
+                    .clone()
+                    .unwrap_or_else(|| "по умолчанию (Ubuntu)".to_string());
+                egui::ComboBox::from_id_salt("lechat-font")
+                    .selected_text(current)
+                    .width(300.0)
+                    .show_ui(ui, |ui| {
+                        ui.text_edit_singleline(&mut query);
+                        if ui
+                            .selectable_label(
+                                appearance.font_family.is_none(),
+                                "по умолчанию (Ubuntu)",
+                            )
+                            .clicked()
+                        {
+                            appearance.font_family = None;
+                            changed = true;
+                        }
+                        let needle = query.to_lowercase();
+                        egui::ScrollArea::vertical()
+                            .max_height(240.0)
+                            .show(ui, |ui| {
+                                for family in &fonts {
+                                    if !needle.is_empty()
+                                        && !family.to_lowercase().contains(&needle)
+                                    {
+                                        continue;
+                                    }
+                                    let selected =
+                                        appearance.font_family.as_deref() == Some(family.as_str());
+                                    if ui.selectable_label(selected, family).clicked() {
+                                        appearance.font_family = Some(family.clone());
+                                        changed = true;
+                                    }
+                                }
+                            });
+                    });
+
+                ui.separator();
+                if ui.button("сбросить").clicked() {
+                    appearance = Appearance::default();
+                    query.clear();
+                    changed = true;
+                }
+                ui.label(
+                    egui::RichText::new("размер и шрифт сохраняются в config.toml")
+                        .size(11.0)
+                        .color(egui::Color32::from_gray(130)),
+                );
+            });
+
+        self.settings_open = open;
+        self.font_query = query;
+        if changed {
+            self.appearance = appearance;
+            self.config.appearance = self.appearance.clone();
+            crate::settings::apply(ctx, &self.appearance);
+            if let Err(err) = self.config.save(&self.config_path) {
+                tracing::warn!("не удалось сохранить конфиг: {err:#}");
+            }
+        }
+    }
 }
 
 impl eframe::App for App {
@@ -229,9 +331,18 @@ impl eframe::App for App {
         }
 
         let sources = &self.sources;
+        let mut settings_open = self.settings_open;
         egui::Panel::top("lechat-status").show(ui, |ui| {
-            status_bar(ui, sources, self.config_error.as_deref());
+            if status_bar(ui, sources, self.config_error.as_deref()) {
+                settings_open = !settings_open;
+            }
         });
+        self.settings_open = settings_open;
+
+        if self.settings_open {
+            let ctx = ui.ctx().clone();
+            self.settings_window(&ctx);
+        }
 
         let timeline = &mut self.timeline;
         egui::CentralPanel::default().show(ui, |ui| {
@@ -240,9 +351,19 @@ impl eframe::App for App {
     }
 }
 
-fn status_bar(ui: &mut egui::Ui, sources: &[SourceState], config_error: Option<&str>) {
+fn status_bar(ui: &mut egui::Ui, sources: &[SourceState], config_error: Option<&str>) -> bool {
+    let small_size = ui
+        .style()
+        .text_styles
+        .get(&egui::TextStyle::Small)
+        .map(|font| font.size)
+        .unwrap_or(11.0);
     ui.add_space(4.0);
+    let mut gear_clicked = false;
     ui.horizontal_wrapped(|ui| {
+        if ui.button("⚙").on_hover_text("настройки").clicked() {
+            gear_clicked = true;
+        }
         ui.label(egui::RichText::new("lechat").strong());
         ui.separator();
         for source in sources {
@@ -258,7 +379,7 @@ fn status_bar(ui: &mut egui::Ui, sources: &[SourceState], config_error: Option<&
                     source.cfg.kind.label(),
                     source.cfg.channel
                 ))
-                .size(12.0),
+                .size(small_size),
             );
             let (rect, response) =
                 ui.allocate_exact_size(egui::vec2(8.0, 8.0), egui::Sense::hover());
@@ -271,7 +392,7 @@ fn status_bar(ui: &mut egui::Ui, sources: &[SourceState], config_error: Option<&
             response.on_hover_text(hint);
             ui.label(
                 egui::RichText::new(source.status.label())
-                    .size(11.0)
+                    .size(small_size)
                     .color(egui::Color32::from_gray(140)),
             );
             ui.separator();
@@ -281,6 +402,7 @@ fn status_bar(ui: &mut egui::Ui, sources: &[SourceState], config_error: Option<&
         }
     });
     ui.add_space(4.0);
+    gear_clicked
 }
 
 fn feed(ui: &mut egui::Ui, timeline: &mut Timeline) {

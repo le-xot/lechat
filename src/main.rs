@@ -4,6 +4,7 @@ mod emotes;
 mod images;
 mod model;
 mod providers;
+mod settings;
 mod twitch;
 mod ui;
 mod util;

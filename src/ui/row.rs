@@ -10,7 +10,7 @@ pub fn entry_ui(ui: &mut egui::Ui, entry: &Entry, channel: &str) {
                 ui.label(
                     egui::RichText::new(text)
                         .italics()
-                        .size(12.0)
+                        .size(ui.style().text_styles.get(&egui::TextStyle::Small).map(|f| f.size).unwrap_or(12.0))
                         .color(egui::Color32::from_gray(150)),
                 );
             });
@@ -21,6 +21,12 @@ pub fn entry_ui(ui: &mut egui::Ui, entry: &Entry, channel: &str) {
 
 pub fn message_ui(ui: &mut egui::Ui, message: &Message, channel: &str) {
     let line_height = ui.text_style_height(&egui::TextStyle::Body);
+    let small_size = ui
+        .style()
+        .text_styles
+        .get(&egui::TextStyle::Small)
+        .map(|font| font.size)
+        .unwrap_or(11.0);
     let mut previous_emote: Option<egui::Rect> = None;
 
     ui.horizontal_wrapped(|ui| {
@@ -40,7 +46,7 @@ pub fn message_ui(ui: &mut egui::Ui, message: &Message, channel: &str) {
             .unwrap_or_else(|| "--:--".to_string());
         ui.label(
             egui::RichText::new(time)
-                .size(11.0)
+                .size(small_size)
                 .color(egui::Color32::from_gray(120)),
         );
 

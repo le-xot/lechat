@@ -61,9 +61,33 @@ impl PanelCfg {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Appearance {
+    #[serde(default = "default_font_size")]
+    pub font_size: f32,
+    /// `None` keeps the built-in font.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub font_family: Option<String>,
+}
+
+fn default_font_size() -> f32 {
+    14.0
+}
+
+impl Default for Appearance {
+    fn default() -> Self {
+        Self {
+            font_size: default_font_size(),
+            font_family: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Config {
     #[serde(default)]
     pub window: WindowCfg,
+    #[serde(default)]
+    pub appearance: Appearance,
     #[serde(default)]
     pub panel: Vec<PanelCfg>,
 }
@@ -101,6 +125,7 @@ impl Config {
     pub fn default_config() -> Config {
         Config {
             window: WindowCfg::default(),
+            appearance: Appearance::default(),
             panel: vec![
                 PanelCfg {
                     kind: PanelKind::Twitch,
@@ -114,6 +139,15 @@ impl Config {
                 },
             ],
         }
+    }
+
+    pub fn save(&self, path: &Path) -> Result<()> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("не удалось создать {}", parent.display()))?;
+        }
+        std::fs::write(path, self.to_toml())
+            .with_context(|| format!("не удалось записать {}", path.display()))
     }
 
     pub fn to_toml(&self) -> String {
@@ -161,6 +195,46 @@ base_url = "https://streamx.satont.dev"
     #[test]
     fn rejects_empty_panels() {
         assert!(Config::parse("[window]\nwidth = 900\nheight = 700\n").is_err());
+    }
+
+    #[test]
+    fn parses_and_saves_appearance() {
+        let mut cfg = Config::parse(
+            r#"
+[[panel]]
+kind = "twitch"
+channel = "a"
+
+[appearance]
+font_size = 17.5
+font_family = "DejaVu Sans"
+"#,
+        )
+        .unwrap();
+        assert_eq!(cfg.appearance.font_size, 17.5);
+        assert_eq!(cfg.appearance.font_family.as_deref(), Some("DejaVu Sans"));
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        cfg.appearance.font_family = None;
+        cfg.save(&path).unwrap();
+        let reread = Config::load_or_create(&path).unwrap();
+        assert_eq!(reread.appearance.font_size, 17.5);
+        assert!(reread.appearance.font_family.is_none());
+    }
+
+    #[test]
+    fn appearance_defaults_when_absent() {
+        let cfg = Config::parse(
+            r#"
+[[panel]]
+kind = "twitch"
+channel = "a"
+"#,
+        )
+        .unwrap();
+        assert_eq!(cfg.appearance.font_size, 14.0);
+        assert!(cfg.appearance.font_family.is_none());
     }
 
     #[test]
