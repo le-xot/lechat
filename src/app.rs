@@ -276,12 +276,6 @@ fn status_bar(ui: &mut egui::Ui, sources: &[SourceState], config_error: Option<&
             );
             ui.separator();
         }
-        let animate = crate::images::ANIMATION_ENABLED.load(std::sync::atomic::Ordering::Relaxed);
-        let mut animate_now = animate;
-        if ui.checkbox(&mut animate_now, "анимация").changed() {
-            crate::images::ANIMATION_ENABLED.store(animate_now, std::sync::atomic::Ordering::Relaxed);
-            ui.ctx().request_repaint();
-        }
         if let Some(error) = config_error {
             ui.colored_label(egui::Color32::from_rgb(0xE0, 0x5C, 0x5C), error);
         }

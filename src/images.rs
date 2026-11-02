@@ -1,6 +1,5 @@
 use std::io::Cursor;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use egui::{
@@ -9,9 +8,6 @@ use egui::{
     mutex::Mutex,
 };
 use image_webp::WebPDecoder;
-
-/// Animated emotes repaint the whole feed, so they are opt-in.
-pub static ANIMATION_ENABLED: AtomicBool = AtomicBool::new(false);
 
 const MAX_FRAMES: u32 = 200;
 
@@ -26,7 +22,7 @@ struct AnimatedWebp {
 }
 
 impl AnimatedWebp {
-    fn decode(bytes: &[u8], animate: bool) -> Result<Self, String> {
+    fn decode(bytes: &[u8]) -> Result<Self, String> {
         let mut decoder = WebPDecoder::new(Cursor::new(bytes)).map_err(|e| e.to_string())?;
         let (width, height) = decoder.dimensions();
         let (width, height) = (width as usize, height as usize);
@@ -38,7 +34,7 @@ impl AnimatedWebp {
         let mut durations = Vec::new();
 
         let animated = decoder.is_animated();
-        let count = if animated && animate {
+        let count = if animated {
             decoder.num_frames().clamp(1, MAX_FRAMES)
         } else {
             1
@@ -54,7 +50,8 @@ impl AnimatedWebp {
                 1000
             };
             frames.push(Arc::new(to_color_image(&buffer, width, height)?));
-            durations.push(Duration::from_millis(u64::from(delay_ms.max(20))));
+            // Cap the redraw rate: egui relayouts the whole feed per animation frame.
+            durations.push(Duration::from_millis(u64::from(delay_ms.max(60))));
         }
 
         Ok(Self {
@@ -108,14 +105,6 @@ pub struct WebpAnimationLoader {
 
 impl WebpAnimationLoader {
     pub const ID: &'static str = "lechat_webp_animation";
-
-    fn durations_for(image: &AnimatedWebp, animate: bool) -> FrameDurations {
-        if animate {
-            image.durations.clone()
-        } else {
-            FrameDurations::new(Vec::new())
-        }
-    }
 }
 
 impl ImageLoader for WebpAnimationLoader {
@@ -127,17 +116,14 @@ impl ImageLoader for WebpAnimationLoader {
         let Ok((uri, index)) = egui::decode_animated_image_uri(frame_uri) else {
             return Err(LoadError::NotSupported);
         };
-        let animate = ANIMATION_ENABLED.load(Ordering::Relaxed);
-
         if let Some(entry) = self.cache.lock().get(uri).cloned() {
             return match entry {
                 Ok(image) => {
-                    let durations = Self::durations_for(&image, animate);
                     ctx.data_mut(|data| {
-                        *data.get_temp_mut_or_default(Id::unique(uri)) = durations;
+                        *data.get_temp_mut_or_default(Id::unique(uri)) = image.durations.clone();
                     });
                     Ok(ImagePoll::Ready {
-                        image: image.frame(if animate { index } else { 0 }),
+                        image: image.frame(index),
                     })
                 }
                 Err(err) => Err(LoadError::Loading(err)),
@@ -149,18 +135,18 @@ impl ImageLoader for WebpAnimationLoader {
                 if !is_webp(&bytes) {
                     return Err(LoadError::NotSupported);
                 }
-                let decoded = AnimatedWebp::decode(&bytes, animate).map(Arc::new);
+                let decoded = AnimatedWebp::decode(&bytes).map(Arc::new);
                 match &decoded {
                     Ok(image) => {
-                        let durations = Self::durations_for(image, animate);
                         ctx.data_mut(|data| {
-                            *data.get_temp_mut_or_default(Id::unique(uri)) = durations;
+                            *data.get_temp_mut_or_default(Id::unique(uri)) =
+                                image.durations.clone();
                         });
                         self.cache
                             .lock()
                             .insert(uri.to_string(), Ok(Arc::clone(image)));
                         Ok(ImagePoll::Ready {
-                            image: image.frame(if animate { index } else { 0 }),
+                            image: image.frame(index),
                         })
                     }
                     Err(err) => {

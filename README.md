@@ -45,17 +45,15 @@ message time. Add more panels to follow more channels.
 ## Controls
 
 - **F5** — reconnect every source.
-- **анимация** checkbox in the header — animate 7TV emotes (off by default: animated
-  emotes repaint the whole feed and cost CPU). Toggling applies to already loaded emotes.
 - Scroll up to pause auto-follow; the “↓ N новых” button jumps back to the live edge.
 
 ## Known limitations
 
 - Twitch has no history over anonymous IRC, so messages sent while disconnected are
   gone; the feed inserts a notice when a connection was lost.
+- Emotes animate continuously (≈16 fps cap). An animated emote in view redraws the
+  feed, so idle CPU is higher than with static emotes.
 - streamx uses an unofficial internal GraphQL API; it can change without notice. The
   client reconnects with backoff and re-fetches history (limited to 500 messages).
 - Badges and avatars are not rendered: Twitch only sends badge names, and resolving
   them requires a Helix client ID/secret.
-- Toggling **анимация** does not re-decode already cached frames; it switches between
-  the cached animation and its first frame.

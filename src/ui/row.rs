@@ -67,6 +67,7 @@ pub fn message_ui(ui: &mut egui::Ui, message: &Message, channel: &str) {
                     let size = ui::emote_size(line_height, emote.aspect);
                     if emote.zero_width {
                         if let Some(previous) = previous_emote
+                            && ui.is_rect_visible(previous)
                             && paint_zero_width(ui, emote, previous, line_height)
                         {
                             continue;
@@ -77,12 +78,21 @@ pub fn message_ui(ui: &mut egui::Ui, message: &Message, channel: &str) {
                                 .alt_text(emote.name.clone()),
                         );
                     } else {
-                        let response = ui.add(
-                            egui::Image::new(emote.uri.clone())
-                                .fit_to_exact_size(size)
-                                .alt_text(emote.name.clone()),
-                        );
-                        previous_emote = Some(response.rect);
+                        // Only paint emotes inside the viewport: an animated
+                        // image schedules repaints, and off-screen rows would
+                        // otherwise keep redrawing the whole feed.
+                        let rect =
+                            egui::Rect::from_min_size(ui.cursor().min, size);
+                        if ui.is_rect_visible(rect) {
+                            let response = ui.add(
+                                egui::Image::new(emote.uri.clone())
+                                    .fit_to_exact_size(size)
+                                    .alt_text(emote.name.clone()),
+                            );
+                            previous_emote = Some(response.rect);
+                        } else {
+                            ui.allocate_exact_size(size, egui::Sense::hover());
+                        }
                     }
                 }
             }
