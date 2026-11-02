@@ -140,6 +140,26 @@ mod tests {
     }
 
     #[test]
+    fn apply_works_for_builtin_real_and_missing_font() {
+        let ctx = egui::Context::default();
+        apply(&ctx, &Appearance::default());
+        apply(
+            &ctx,
+            &Appearance {
+                font_size: 18.0,
+                font_family: Some("DejaVu Sans".into()),
+            },
+        );
+        apply(
+            &ctx,
+            &Appearance {
+                font_size: 18.0,
+                font_family: Some("нет-такого-шрифта".into()),
+            },
+        );
+    }
+
+    #[test]
     fn missing_family_falls_back() {
         assert!(load_family("Определённо-нет-такого-шрифта").is_none());
     }
