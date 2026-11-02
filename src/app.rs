@@ -258,15 +258,15 @@ impl App {
 
                 ui.separator();
                 ui.label("шрифт");
-                let current = appearance
-                    .font_family
-                    .clone()
-                    .unwrap_or_else(|| "по умолчанию (Ubuntu)".to_string());
-                egui::ComboBox::from_id_salt("lechat-font")
-                    .selected_text(current)
-                    .width(300.0)
-                    .show_ui(ui, |ui| {
-                        ui.text_edit_singleline(&mut query);
+                ui.add(
+                    egui::TextEdit::singleline(&mut query)
+                        .hint_text("поиск шрифта")
+                        .desired_width(f32::INFINITY),
+                );
+                egui::ScrollArea::vertical()
+                    .max_height(220.0)
+                    .auto_shrink([false, true])
+                    .show(ui, |ui| {
                         if ui
                             .selectable_label(
                                 appearance.font_family.is_none(),
@@ -278,23 +278,17 @@ impl App {
                             changed = true;
                         }
                         let needle = query.to_lowercase();
-                        egui::ScrollArea::vertical()
-                            .max_height(240.0)
-                            .show(ui, |ui| {
-                                for family in &fonts {
-                                    if !needle.is_empty()
-                                        && !family.to_lowercase().contains(&needle)
-                                    {
-                                        continue;
-                                    }
-                                    let selected =
-                                        appearance.font_family.as_deref() == Some(family.as_str());
-                                    if ui.selectable_label(selected, family).clicked() {
-                                        appearance.font_family = Some(family.clone());
-                                        changed = true;
-                                    }
-                                }
-                            });
+                        for family in &fonts {
+                            if !needle.is_empty() && !family.to_lowercase().contains(&needle) {
+                                continue;
+                            }
+                            let selected =
+                                appearance.font_family.as_deref() == Some(family.as_str());
+                            if ui.selectable_label(selected, family).clicked() {
+                                appearance.font_family = Some(family.clone());
+                                changed = true;
+                            }
+                        }
                     });
 
                 ui.separator();
