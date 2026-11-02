@@ -1,7 +1,7 @@
 [Desktop Entry]
 Type=Application
 Name=lechat
-Comment=Twitch and streamx chat in one window
+Comment=Чаты Twitch и streamx в одном окне
 Exec=lechat
 Icon=lechat
 Terminal=false

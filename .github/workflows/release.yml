@@ -14,10 +14,8 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
             asset: lechat-x86_64-unknown-linux-gnu.tar.gz
           - os: windows-latest
-            target: x86_64-pc-windows-msvc
             asset: lechat-x86_64-pc-windows-msvc.zip
     runs-on: ${{ matrix.os }}
     steps:
@@ -39,7 +37,21 @@ jobs:
         run: |
           Compress-Archive -Path target/release/lechat.exe, README.md -DestinationPath "${{ matrix.asset }}"
 
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: ${{ matrix.asset }}
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
       - uses: softprops/action-gh-release@v2
         with:
-          files: ${{ matrix.asset }}
+          files: dist/*
           generate_release_notes: true
