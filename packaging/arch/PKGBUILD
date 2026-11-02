@@ -1,0 +1,21 @@
+# Maintainer: le-xot <lexot.dev@gmail.com>
+pkgname=lechat-bin
+pkgver=1.0.0
+pkgrel=1
+pkgdesc="Read-only Twitch and streamx chat in one window"
+arch=('x86_64')
+url="https://github.com/le-xot/lechat"
+license=('MIT')
+depends=('glibc' 'gcc-libs' 'fontconfig' 'libxkbcommon' 'wayland')
+provides=('lechat')
+conflicts=('lechat')
+options=('!strip')
+source=("${url}/releases/download/v${pkgver}/lechat-x86_64-unknown-linux-gnu.tar.gz")
+sha256sums=('SKIP') # filled in when a release is published
+
+package() {
+    install -Dm755 "${srcdir}/lechat" "${pkgdir}/usr/bin/lechat"
+    install -Dm644 "${srcdir}/lechat.desktop" "${pkgdir}/usr/share/applications/lechat.desktop"
+    install -Dm644 "${srcdir}/lechat.png" "${pkgdir}/usr/share/icons/hicolor/256x256/apps/lechat.png"
+    install -Dm644 "${srcdir}/README.md" "${pkgdir}/usr/share/doc/lechat/README.md"
+}

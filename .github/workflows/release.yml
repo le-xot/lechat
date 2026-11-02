@@ -1,0 +1,45 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            asset: lechat-x86_64-unknown-linux-gnu.tar.gz
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            asset: lechat-x86_64-pc-windows-msvc.zip
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release --locked
+
+      - name: Package (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          mkdir -p staging
+          cp target/release/lechat staging/
+          cp assets/lechat.desktop assets/lechat.png README.md staging/
+          tar -czf "${{ matrix.asset }}" -C staging .
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          Compress-Archive -Path target/release/lechat.exe, README.md -DestinationPath "${{ matrix.asset }}"
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ matrix.asset }}
+          generate_release_notes: true

@@ -12,7 +12,23 @@ window, one merged feed, a platform badge in front of every message.
 
 No sending, no moderation, no reactions — display only.
 
-## Build
+## Install
+
+Arch (local package, the same thing `yay` would do):
+
+```bash
+git clone https://github.com/le-xot/lechat
+cd lechat/packaging/arch
+makepkg -si
+```
+
+User-local install with silent self-update (`~/.local/bin/lechat`):
+
+```bash
+./install.sh
+```
+
+Or build from source:
 
 ```bash
 cargo build --release
@@ -30,6 +46,9 @@ Created on first run at `~/.config/lechat/config.toml`:
 [window]
 width = 1100.0
 height = 760.0
+
+[updates]
+check = true
 
 [appearance]
 font_size = 14.0
@@ -55,7 +74,10 @@ message time. Add more panels to follow more channels.
 - **⚙** in the header — font size (11–24), any installed font with Cyrillic coverage,
   and timestamps (hide, or show with seconds). Changes apply immediately and are saved
   to the config.
-- **F5** — reconnect every source.
+- **F5** — reconnect every source; **↻** in the header does the same.
+- Updates: user-local installs replace themselves silently on the next launch and show a
+  "restart" button when a new build is ready. Package-managed installs (`/usr/bin`)
+  only show that a new version exists — update them through the package manager.
 - Scroll up to pause auto-follow; the “↓ N новых” button jumps back to the live edge.
 
 ## Known limitations

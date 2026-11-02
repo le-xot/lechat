@@ -93,11 +93,25 @@ impl Default for Appearance {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Updates {
+    #[serde(default = "default_true")]
+    pub check: bool,
+}
+
+impl Default for Updates {
+    fn default() -> Self {
+        Self { check: true }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Config {
     #[serde(default)]
     pub window: WindowCfg,
     #[serde(default)]
     pub appearance: Appearance,
+    #[serde(default)]
+    pub updates: Updates,
     #[serde(default)]
     pub panel: Vec<PanelCfg>,
 }
@@ -136,6 +150,7 @@ impl Config {
         Config {
             window: WindowCfg::default(),
             appearance: Appearance::default(),
+            updates: Updates::default(),
             panel: vec![
                 PanelCfg {
                     kind: PanelKind::Twitch,
@@ -227,6 +242,7 @@ show_seconds = true
         assert_eq!(cfg.appearance.font_family.as_deref(), Some("DejaVu Sans"));
         assert!(!cfg.appearance.show_time);
         assert!(cfg.appearance.show_seconds);
+        assert!(cfg.updates.check);
 
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.toml");

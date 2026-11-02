@@ -9,6 +9,7 @@ use crate::model::{Entry, Platform};
 use crate::providers::{ConnectionStatus, ProviderEvent, streamx, twitch};
 use crate::ui::timeline::Timeline;
 use crate::ui::{self, row, NEAR_BOTTOM_PX};
+use crate::update::{self, UpdateState};
 
 pub struct SourceState {
     pub cfg: PanelCfg,
@@ -34,6 +35,8 @@ pub struct App {
     fonts: Option<Vec<String>>,
     font_query: String,
     settings_open: bool,
+    update_state: UpdateState,
+    update_rx: Option<UnboundedReceiver<UpdateState>>,
 }
 
 impl App {
@@ -51,6 +54,11 @@ impl App {
         app.config_error = config_error;
         app.spawn_enabled = true;
         crate::settings::apply(&cc.egui_ctx, &app.appearance);
+        if app.config.updates.check {
+            let (tx, rx) = mpsc::unbounded_channel();
+            app.update_rx = Some(rx);
+            std::thread::spawn(move || update::check(tx));
+        }
         app.spawn_all();
         app
     }
@@ -87,6 +95,8 @@ impl App {
             fonts: None,
             font_query: String::new(),
             settings_open: false,
+            update_state: UpdateState::Disabled,
+            update_rx: None,
         }
     }
 
@@ -192,6 +202,7 @@ impl App {
         let fonts = self.fonts.clone().unwrap_or_default();
 
         let mut appearance = self.appearance.clone();
+        let mut updates_check = self.config.updates.check;
         let mut query = self.font_query.clone();
         let mut open = self.settings_open;
         let mut changed = false;
@@ -216,6 +227,9 @@ impl App {
                         .checkbox(&mut appearance.show_seconds, "с секундами")
                         .changed();
                 });
+                changed |= ui
+                    .checkbox(&mut updates_check, "проверять обновления")
+                    .changed();
 
                 ui.separator();
                 ui.label("шрифт");
@@ -267,6 +281,10 @@ impl App {
 
         self.settings_open = open;
         self.font_query = query;
+        if self.config.updates.check != updates_check {
+            self.config.updates.check = updates_check;
+            changed = true;
+        }
         if changed {
             self.appearance = appearance;
             self.config.appearance = self.appearance.clone();
@@ -281,6 +299,11 @@ impl App {
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.drain_events();
+        if let Some(rx) = &mut self.update_rx
+            && let Ok(state) = rx.try_recv()
+        {
+            self.update_state = state;
+        }
         if ui.input(|input| input.key_pressed(egui::Key::F5)) {
             self.request_reconnect_all();
         }
@@ -288,16 +311,27 @@ impl eframe::App for App {
         let sources = &self.sources;
         let mut settings_open = self.settings_open;
         let mut refresh = false;
+        let mut restart = false;
+        let update_state = self.update_state.clone();
         egui::Panel::top("lechat-status").show(ui, |ui| {
-            let (gear, reload) = status_bar(ui, sources, self.config_error.as_deref());
+            let (gear, reload, relaunch) = status_bar(
+                ui,
+                sources,
+                self.config_error.as_deref(),
+                &update_state,
+            );
             if gear {
                 settings_open = !settings_open;
             }
             refresh = reload;
+            restart = relaunch;
         });
         self.settings_open = settings_open;
         if refresh {
             self.request_reconnect_all();
+        }
+        if restart {
+            restart_now();
         }
 
         if self.settings_open {
@@ -317,10 +351,18 @@ fn status_bar(
     ui: &mut egui::Ui,
     sources: &[SourceState],
     config_error: Option<&str>,
-) -> (bool, bool) {
+    update_state: &UpdateState,
+) -> (bool, bool, bool) {
+    let small_size = ui
+        .style()
+        .text_styles
+        .get(&egui::TextStyle::Small)
+        .map(|font| font.size)
+        .unwrap_or(11.0);
     ui.add_space(4.0);
     let mut gear_clicked = false;
     let mut refresh_clicked = false;
+    let mut restart_clicked = false;
     ui.horizontal_wrapped(|ui| {
         if ui.button("⚙").on_hover_text("настройки").clicked() {
             gear_clicked = true;
@@ -366,10 +408,45 @@ fn status_bar(
             {
                 refresh_clicked = true;
             }
+            match update_state {
+                UpdateState::Ready(version) => {
+                    if ui
+                        .button(format!("обновление {version} — перезапустить"))
+                        .clicked()
+                    {
+                        restart_clicked = true;
+                    }
+                }
+                UpdateState::Available(version) => {
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "{version} — обнови через пакетный менеджер"
+                        ))
+                        .size(small_size)
+                        .color(egui::Color32::from_gray(150)),
+                    );
+                }
+                UpdateState::Error(error) => {
+                    ui.label(
+                        egui::RichText::new("⚠ обновление")
+                            .size(small_size)
+                            .color(egui::Color32::from_rgb(0xE0, 0xB0, 0x4C)),
+                    )
+                    .on_hover_text(error);
+                }
+                _ => {}
+            }
         });
     });
     ui.add_space(4.0);
-    (gear_clicked, refresh_clicked)
+    (gear_clicked, refresh_clicked, restart_clicked)
+}
+
+fn restart_now() {
+    if let Ok(exe) = std::env::current_exe() {
+        let _ = std::process::Command::new(exe).spawn();
+    }
+    std::process::exit(0);
 }
 
 fn feed(ui: &mut egui::Ui, timeline: &mut Timeline, appearance: &Appearance) {
