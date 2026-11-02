@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+pub mod seventv;
+
 use crate::model::{EmotePart, NativeEmote, Part};
 
 #[derive(Debug, Clone, PartialEq)]

@@ -1,5 +1,6 @@
 mod config;
 mod emotes;
+mod images;
 mod model;
 mod providers;
 mod twitch;
