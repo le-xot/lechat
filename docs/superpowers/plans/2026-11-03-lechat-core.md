@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Read-only нативное окно с чатами Twitch и streamx рядом, с 7TV-эмоутами и устойчивым реконнектом.
+**Goal:** Read-only нативное окно с одной общей лентой чатов Twitch и streamx, плашкой источника у каждого сообщения, 7TV-эмоутами и устойчивым реконнектом.
 
-**Architecture:** eframe/egui приложение в главном потоке; на каждую панель — tokio-таск, который держит соединение и шлёт `ProviderEvent` в `mpsc`. UI раз в кадр вычитывает события в `VecDeque<Message>` и просит перерисовку. Платформенная логика изолирована в `providers/`, отрисовка — в `ui/`.
+**Architecture:** eframe/egui приложение в главном потоке; на каждый канал — tokio-таск, который держит соединение и шлёт `ProviderEvent` в `mpsc`. UI раз в кадр вычитывает события и вставляет их в единый `Timeline` (сортировка по времени, дедуп, лимит 500). Платформенная логика изолирована в `providers/`, отрисовка — в `ui/`.
 
 **Tech Stack:** Rust 1.99, eframe/egui 0.37, egui_extras 0.37 (`http`, `image`, `webp`), tokio 1.54, tokio-tungstenite 0.30, reqwest 0.13, serde/toml, chrono, tracing.
 
@@ -15,8 +15,9 @@
 - egui/eframe/egui_extras ровно `0.37`, edition 2024.
 - Только чтение: никаких мутаций, отправки, авторизации.
 - Никаких секретов и токенов в конфиге и логах.
-- Лимит истории — 500 сообщений на панель, дедуп по `id`.
-- Минимальный размер окна 720×520; 280px — мягкий минимум ширины панели (если окно уже `N*280`, панели делятся поровну).
+- Лимит ленты — 500 записей всего, дедуп по `(platform, id)`.
+- Минимальный размер окна 720×520.
+- Плашка источника: 16px, скруглённый квадрат, `#9146FF` + `T` (Twitch), `#00DC82` + `S` (streamx), тултип `платформа + канал`.
 - История streamx запрашивается с `limit = 500`.
 - Высота эмоута = 1.5 × высоты строки текста, ширина по пропорции исходника.
 - Порог «прилипания к низу» — 64px.
@@ -30,6 +31,7 @@
 - streamx: протокол-относительные URL `//cdn.7tv.app/...` и неизвестные типы сегментов — не должны ломать сообщение.
 - Реконнект streamx: догрузка истории не должна давать дубли, а пропущенные сообщения не должны теряться.
 - Картинки: 404, огромный эмоут, битый анимированный WebP — фолбэк без паники, зависания UI и утечки памяти.
+- Общая лента: сообщения двух источников с расхождением часов не должны прыгать назад/вперёд или дублироваться.
 
 ---
 
@@ -480,15 +482,15 @@ git commit -m "feat: 7TV emote catalog and animated webp loader"
 
 ---
 
-### Task 7: UI панелей и строк
+### Task 7: Единая лента, плашка источника и строки
 
 **Files:**
-- Create: `src/ui/mod.rs`, `src/ui/pane.rs`, `src/ui/row.rs`, `src/app.rs`
-- Test: `src/ui/mod.rs`, `src/app.rs`
+- Create: `src/ui/mod.rs`, `src/ui/timeline.rs`, `src/ui/row.rs`, `src/app.rs`
+- Test: `src/ui/mod.rs`, `src/ui/timeline.rs`, `src/app.rs`
 
 **Interfaces:**
-- Consumes: `Message`, `Part`, `Entry`, `PanelCfg`, `ConnectionStatus`.
-- Produces: `ui::emote_size(line_height: f32, aspect: f32) -> egui::Vec2`, `ui::zero_width_rect(prev: Option<egui::Rect>, cursor: egui::Pos2, line_height: f32) -> egui::Rect`, `ui::near_bottom(offset_from_end: f32) -> bool`, `ui::splitter::clamp_fractions(fractions: &mut [f32], idx: usize, delta: f32, min_px: f32, total_px: f32)`, `Pane { spec, entries: VecDeque<Entry>, status, last_error, unread, follow }`, `App { panes: Vec<Pane> }` + `App::apply_event(&mut self, ProviderEvent)`.
+- Consumes: `Message`, `Part`, `Entry`, `Platform`, `PanelCfg`, `ConnectionStatus`.
+- Produces: `Timeline { entries: VecDeque<Entry>, unread: usize, follow: bool }` с `Timeline::push(&mut self, Entry)`, `Timeline::insert_sorted`, `Timeline::len`; `ui::emote_size(line_height: f32, aspect: f32) -> egui::Vec2`, `ui::zero_width_rect(prev: Option<egui::Rect>, cursor: egui::Pos2, line_height: f32) -> egui::Rect`, `ui::near_bottom(offset_from_end: f32) -> bool`, `ui::source_badge(ui: &mut egui::Ui, platform: Platform, tooltip: &str)`, `App { timeline: Timeline, sources: Vec<SourceState> }` + `App::apply_event(&mut self, ProviderEvent)`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -508,14 +510,6 @@ fn near_bottom_uses_64px_threshold() {
 }
 
 #[test]
-fn splitter_respects_min_pane_width() {
-    let mut fr = [0.5, 0.5];
-    clamp_fractions(&mut fr, 0, -400.0, 280.0, 800.0);
-    assert!(fr[0] * 800.0 >= 280.0);
-    assert!((fr[0] + fr[1] - 1.0).abs() < 1e-6);
-}
-
-#[test]
 fn zero_width_overlays_previous_emote() {
     let prev = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(90.0, 30.0));
     let r = zero_width_rect(Some(prev), egui::pos2(100.0, 0.0), 30.0);
@@ -524,13 +518,39 @@ fn zero_width_overlays_previous_emote() {
 }
 
 #[test]
-fn apply_event_routes_message_to_pane_and_bumps_unread() {
-    let mut app = App::new(cfg_with_two_panels());
-    app.panes[0].follow = false;
+fn timeline_keeps_chronological_order() {
+    let mut t = Timeline::default();
+    t.insert_sorted(msg_at(Platform::Streamx, "b", 200));
+    t.insert_sorted(msg_at(Platform::Twitch, "a", 100));
+    t.insert_sorted(msg_at(Platform::Twitch, "c", 300));
+    let ids: Vec<_> = t.messages().map(|m| m.id.as_str()).collect();
+    assert_eq!(ids, vec!["a", "b", "c"]);
+}
+
+#[test]
+fn timeline_dedupes_by_platform_and_id() {
+    let mut t = Timeline::default();
+    t.insert_sorted(msg_at(Platform::Twitch, "1", 100));
+    t.insert_sorted(msg_at(Platform::Streamx, "1", 101));
+    t.insert_sorted(msg_at(Platform::Twitch, "1", 102));
+    assert_eq!(t.len(), 2);
+}
+
+#[test]
+fn timeline_caps_at_500() {
+    let mut t = Timeline::default();
+    for i in 0..501 { t.insert_sorted(msg_at(Platform::Twitch, &format!("m{i}"), i)); }
+    assert_eq!(t.len(), 500);
+    assert!(!t.messages().any(|m| m.id == "m0"));
+}
+
+#[test]
+fn apply_event_bumps_unread_when_not_following() {
+    let mut app = App::new(cfg_with_two_channels());
+    app.timeline.follow = false;
     app.apply_event(ProviderEvent::Message(0, msg("m1")));
-    assert_eq!(app.panes[0].entries.len(), 1);
-    assert_eq!(app.panes[0].unread, 1);
-    assert_eq!(app.panes[1].entries.len(), 0);
+    assert_eq!(app.timeline.len(), 1);
+    assert_eq!(app.timeline.unread, 1);
 }
 ```
 
@@ -541,7 +561,7 @@ Expected: FAIL.
 
 - [ ] **Step 3: Implement**
 
-`Pane::ui(ui, &mut self)` — шапка (имя платформы, канал, цветная точка статуса, тултип с ошибкой), затем `ScrollArea::vertical().stick_to_bottom(self.follow)`, строки `Entry`. Строка сообщения: `ЧЧ:ММ` (chrono, локальная зона), ник цветом (`Author.color`), части — текст/эмодзи/ссылки. Эмодзи через `ui.image(uri)` с размером `emote_size`; zero-width рисуется `ui.painter().image()` в прямоугольнике `zero_width_rect` поверх предыдущего эмоута (в начале строки — инлайн уменьшенным). `Entry::Note` — серая курсивная строка по центру. Прокрутка: если `follow` выключен показывается кнопка «↓ N новых», клик — `stick_to_bottom` на следующий кадр. Панели: `ui.horizontal` с собственными фракциями ширины и перетаскиваемыми разделителями (`clamp_fractions`); 280px — мягкий минимум, при нехватке места фракции равняются. Минимальный размер окна задаётся в `NativeOptions`. Тема — тёмная, шрифт по умолчанию 14.
+`Timeline` — единый `VecDeque<Entry>`: `Message` вставляется по `ts_ms` (бинарный поиск, при равенстве — после существующих), дедуп по `(platform, id)`, после вставки обрезается до 500 с начала. Шапка: для каждого источника `source_badge` + канал + точка статуса + тултип ошибки. Ниже — один `ScrollArea::vertical().stick_to_bottom(self.follow)` со строками. Строка: `source_badge` (16×16, `painter.rect_filled` + текст `T`/`S` белым, скругление 4px), `ЧЧ:ММ` (chrono, локальная зона), ник цветом, части. Эмодзи через `ui.image(uri)` с размером `emote_size`; zero-width — `ui.painter().image()` в `zero_width_rect` поверх предыдущего эмоута, в начале строки — инлайн уменьшенным. `Entry::Note` — серая курсивная строка по центру. Прокрутка: если `follow` выключен — кнопка «↓ N новых», клик возвращает `follow` и `stick_to_bottom`. Тема тёмная, шрифт 14, минимальное окно 720×520.
 
 - [ ] **Step 4: Run tests**
 
@@ -552,7 +572,7 @@ Expected: PASS.
 
 ```bash
 git add src/ui/ src/app.rs
-git commit -m "feat: two-pane chat UI with emote rendering and scroll follow"
+git commit -m "feat: unified chat feed with source badges and emote rendering"
 ```
 
 ---
@@ -571,8 +591,8 @@ git commit -m "feat: two-pane chat UI with emote rendering and scroll follow"
 
 ```rust
 #[test]
-fn f5_sets_reconnect_flag_for_every_pane() {
-    let mut app = App::new(cfg_with_two_panels());
+fn f5_sets_reconnect_flag_for_every_source() {
+    let mut app = App::new(cfg_with_two_channels());
     app.request_reconnect_all();
     assert_eq!(app.pending_reconnects(), vec![true, true]);
 }
@@ -585,7 +605,7 @@ Expected: FAIL.
 
 - [ ] **Step 3: Implement**
 
-`main`: `tracing_subscriber`, `egui_extras::install_image_loaders(&cc.egui_ctx)`, регистрация `WebpAnimationLoader`, `tokio::runtime::Runtime`, `eframe::run_native` с `viewport` (720×520 min, 1200×800 default), `persist_window`. `App::new`: создать панели из конфига, для каждой — свой `Arc<RwLock<EmoteCatalog>>`, спавнить провайдеры, получить `Receiver<ProviderEvent>`; если конфиг битый — панель с ошибкой вместо паники. `App::update`: вычитать все события, `apply_event`, `F5` → реконнект (переспавнить таски), сохранять геометрию окна. 7TV-каталог грузится отдельной таской в панель после `RoomId`; ошибка загрузки не блокирует чат (эмоуты текстом), повтор — реконнект, F5, отложенный через 60с.
+`main`: `tracing_subscriber`, `egui_extras::install_image_loaders(&cc.egui_ctx)`, регистрация `WebpAnimationLoader`, `tokio::runtime::Runtime`, `eframe::run_native` с `viewport` (720×520 min, 1200×800 default), `persist_window`. `App::new`: создать источники из конфига, для каждого Twitch-канала — свой `Arc<RwLock<EmoteCatalog>>`, спавнить провайдеры с индексом источника, получить `Receiver<ProviderEvent>`; если конфиг битый — плашка с ошибкой вместо паники. `App::update`: вычитать все события, `apply_event`, `F5` → реконнект (переспавнить таски), сохранять геометрию окна. 7TV-каталог грузится отдельной таской в свой источник после `RoomId`; ошибка загрузки не блокирует чат (эмоуты текстом), повтор — реконнект, F5, отложенный через 60с.
 
 - [ ] **Step 4: Verify build, tests, clippy**
 
@@ -595,7 +615,7 @@ Expected: PASS без предупреждений.
 - [ ] **Step 5: Manual smoke**
 
 Run: `cargo run --release`
-Expected: окно с двумя панелями; Twitch показывает последние сообщения после активности в канале, streamx загружает историю и живые сообщения; эмодзи анимируются, широкие не сплющены; при обрыве сети статус меняется и восстанавливается.
+Expected: одно окно с общей лентой; в шапке оба источника со статусами; сообщения идут вперемешку по времени с фиолетовыми `T` и зелёными `S`; streamx загружает историю и живой поток; эмодзи анимируются и не сплющены; при обрыве сети появляется пометка и статус восстанавливается.
 
 - [ ] **Step 6: Commit**
 
@@ -609,7 +629,7 @@ git push -u origin feat/chat-core
 
 ## Self-Review
 
-- Покрытие спека: анонимный Twitch (Task 3–4), streamx HTTP+WS (Task 5), 7TV и анимация (Task 6), отрисовка эмоутов/скролл/панели (Task 7), конфиг (Task 1), реконнект/дедуп/500 (Task 4–5, 8), документация (Task 8). Пусто: system-сообщения, бейджи — сознательные не-цели.
+- Покрытие спека: анонимный Twitch (Task 3–4), streamx HTTP+WS (Task 5), 7TV и анимация (Task 6), единая лента, плашки и скролл (Task 7), конфиг (Task 1), реконнект/дедуп/500 (Task 4–5, 8), документация (Task 8). Пусто: system-сообщения, бейджи — сознательные не-цели.
 - Границы задач: каждая даёт работающий, отдельно тестируемый кусок; UI не зависит от сети в тестах (`apply_event`).
-- Имена согласованы: `ProviderEvent`, `Message`, `Part`, `EmoteInfo`, `emote_size`, `near_bottom`, `dedupe_append`.
+- Имена согласованы: `ProviderEvent`, `Message`, `Part`, `EmoteInfo`, `emote_size`, `near_bottom`, `merge_history`.
 - Review Focus: чанкование IRC (Task 4), Unicode-смещения (Task 2), протокол-относительные URL (Task 5), дедуп после реконнекта (Task 5), фолбэк картинок (Task 6–7).
