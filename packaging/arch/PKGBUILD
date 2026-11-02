@@ -18,4 +18,5 @@ package() {
     install -Dm644 "${srcdir}/lechat.desktop" "${pkgdir}/usr/share/applications/lechat.desktop"
     install -Dm644 "${srcdir}/lechat.png" "${pkgdir}/usr/share/icons/hicolor/256x256/apps/lechat.png"
     install -Dm644 "${srcdir}/README.md" "${pkgdir}/usr/share/doc/lechat/README.md"
+    install -Dm644 "${srcdir}/LICENSE" "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
 }
