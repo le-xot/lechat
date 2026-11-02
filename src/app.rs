@@ -377,21 +377,23 @@ fn status_bar(ui: &mut egui::Ui, sources: &[SourceState], config_error: Option<&
                 platform,
                 &format!("{} #{}", source.cfg.kind.label(), source.cfg.channel),
             );
-            ui.label(
-                egui::RichText::new(format!(
-                    "{} #{}",
-                    source.cfg.kind.label(),
-                    source.cfg.channel
-                ))
-                .size(small_size),
-            );
             let (rect, response) =
                 ui.allocate_exact_size(egui::vec2(8.0, 8.0), egui::Sense::hover());
             ui.painter()
                 .circle_filled(rect.center(), 4.0, source.status.color());
             let hint = match &source.error {
-                Some(error) => format!("{}: {error}", source.status.label()),
-                None => source.status.label().to_string(),
+                Some(error) => format!(
+                    "{} #{} · {}: {error}",
+                    source.cfg.kind.label(),
+                    source.cfg.channel,
+                    source.status.label()
+                ),
+                None => format!(
+                    "{} #{} · {}",
+                    source.cfg.kind.label(),
+                    source.cfg.channel,
+                    source.status.label()
+                ),
             };
             response.on_hover_text(hint);
             ui.label(
