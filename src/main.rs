@@ -1,11 +1,17 @@
+mod app;
 mod config;
 mod emotes;
 mod images;
 mod model;
 mod providers;
 mod twitch;
+mod ui;
 
 fn main() -> eframe::Result {
+    tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::INFO)
+        .init();
+
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1200.0, 800.0])
@@ -13,20 +19,10 @@ fn main() -> eframe::Result {
             .with_title("lechat"),
         ..Default::default()
     };
+
     eframe::run_native(
         "lechat",
         options,
-        Box::new(|_cc| Ok(Box::<Empty>::default())),
+        Box::new(|cc| Ok(Box::new(app::App::new(cc)))),
     )
-}
-
-#[derive(Default)]
-struct Empty;
-
-impl eframe::App for Empty {
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        egui::CentralPanel::default().show(ui, |ui| {
-            ui.heading("lechat");
-        });
-    }
 }
