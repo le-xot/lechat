@@ -1,0 +1,37 @@
+{
+  "name": "le_xot's Emotes",
+  "emotes": [
+    {
+      "id": "01FG56BPX00000Y99N1Q2XF4NM",
+      "name": "privet",
+      "flags": 0,
+      "data": {
+        "animated": true,
+        "host": {
+          "url": "//cdn.7tv.app/emote/01FG56BPX00000Y99N1Q2XF4NM",
+          "files": [
+            { "name": "1x.webp", "static_name": "1x_static.webp", "width": 96, "height": 32, "frame_count": 20, "format": "WEBP" },
+            { "name": "2x.webp", "static_name": "2x_static.webp", "width": 192, "height": 64, "frame_count": 20, "format": "WEBP" },
+            { "name": "3x.webp", "static_name": "3x_static.webp", "width": 288, "height": 96, "frame_count": 20, "format": "WEBP" },
+            { "name": "4x.webp", "static_name": "4x_static.webp", "width": 384, "height": 128, "frame_count": 20, "format": "WEBP" }
+          ]
+        }
+      }
+    },
+    {
+      "id": "01FCY771D800007PQ2DF3GDTN6",
+      "name": "RainTime",
+      "flags": 1,
+      "data": {
+        "animated": true,
+        "host": {
+          "url": "//cdn.7tv.app/emote/01FCY771D800007PQ2DF3GDTN6",
+          "files": [
+            { "name": "1x.webp", "static_name": "1x_static.webp", "width": 32, "height": 32, "frame_count": 35, "format": "WEBP" },
+            { "name": "2x.webp", "static_name": "2x_static.webp", "width": 64, "height": 64, "frame_count": 35, "format": "WEBP" }
+          ]
+        }
+      }
+    }
+  ]
+}
