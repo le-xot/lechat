@@ -1,20 +1,17 @@
 # lechat
 
-Read-only chat viewer for streamers who broadcast to two platforms at once. One native
-window, one merged feed, a platform badge in front of every message.
+Читалка чатов для стримера, который стримит на две платформы сразу. Одно нативное окно, одна общая лента, плашка платформы перед каждым сообщением.
 
-- **Twitch** — anonymous IRC over WebSocket (`justinfan`), no login, read-only. On connect
-  the last messages are backfilled from the public
-  [recent-messages](https://recent-messages.robotty.de) service (the same one Chatterino uses).
-- **streamx** — GraphQL over HTTP + WebSocket subscriptions, no login.
-- **7TV** — channel and global emotes, wide and zero-width emotes, optional animation.
-- Built with [egui](https://github.com/emilk/egui) 0.37 / eframe, one binary, no backend.
+- **Twitch** — анонимный IRC поверх WebSocket (`justinfan`), без логина, только чтение. При подключении подтягивает последние сообщения с публичного сервиса [recent-messages](https://recent-messages.robotty.de) (его же использует Chatterino).
+- **streamx** — GraphQL поверх HTTP и WebSocket-подписки, без логина.
+- **7TV** — эмоуты канала и глобальные, широкие и zero-width, анимация.
+- Написано на [egui](https://github.com/emilk/egui) 0.37 / eframe: один бинарь, без бэкенда и БД.
 
-No sending, no moderation, no reactions — display only.
+Отправки сообщений, модерации и реакций нет — только просмотр.
 
-## Install
+## Установка
 
-Arch (local package, the same thing `yay` would do):
+Arch, локальный пакет (то же, что сделал бы `yay`):
 
 ```bash
 git clone https://github.com/le-xot/lechat
@@ -22,25 +19,24 @@ cd lechat/packaging/arch
 makepkg -si
 ```
 
-User-local install with silent self-update (`~/.local/bin/lechat`):
+Пользовательская установка с тихим самообновлением (в `~/.local/bin/lechat`):
 
 ```bash
 ./install.sh
 ```
 
-Or build from source:
+Или собрать из исходников:
 
 ```bash
 cargo build --release
 ./target/release/lechat
 ```
 
-Linux (Wayland/X11) is the primary target. Requires Rust 1.85+ (edition 2024) and a
-working GPU/OpenGL/Vulkan stack for eframe.
+Готовые бинарники: [Releases](https://github.com/le-xot/lechat/releases) — `tar.gz` для Linux и `zip` для Windows.
 
-## Config
+## Конфиг
 
-Created on first run at `~/.config/lechat/config.toml`:
+Создаётся при первом запуске в `~/.config/lechat/config.toml` (на Windows — `%APPDATA%\le-xot\lechat\config.toml`):
 
 ```toml
 [window]
@@ -52,7 +48,7 @@ check = true
 
 [appearance]
 font_size = 14.0
-# font_family = "Cantarell"   # omit for the built-in font
+# font_family = "Cantarell"   # можно не указывать — останется встроенный шрифт
 show_time = true
 show_seconds = false
 
@@ -66,28 +62,38 @@ channel = "le-xot"
 base_url = "https://streamx.satont.dev"
 ```
 
-`kind` is `twitch` or `streamx`. Both kinds feed the same merged timeline, sorted by
-message time. Add more panels to follow more channels.
+`kind` — `twitch` или `streamx`. Все каналы попадают в одну ленту, отсортированную по времени. Панелей можно добавить сколько угодно.
 
-## Controls
+## Управление
 
-- **⚙** in the header — font size (11–24), any installed font with Cyrillic coverage,
-  and timestamps (hide, or show with seconds). Changes apply immediately and are saved
-  to the config.
-- **F5** — reconnect every source; **↻** in the header does the same.
-- Updates: user-local installs replace themselves silently on the next launch and show a
-  "restart" button when a new build is ready. Package-managed installs (`/usr/bin`)
-  only show that a new version exists — update them through the package manager.
-- Scroll up to pause auto-follow; the “↓ N новых” button jumps back to the live edge.
+- **⚙** в шапке — размер шрифта (11–24), любой установленный шрифт с кириллицей, показ времени (и секунд), проверка обновлений. Применяется сразу и сохраняется в конфиг.
+- **↻** в шапке или **F5** — переподключить все источники.
+- Прокрутил вверх — автопрокрутка останавливается; кнопка «↓ N новых» возвращает к живому краю.
 
-## Known limitations
+## Обновления
 
-- Twitch IRC itself has no history: the backfill comes from a third-party service and
-  only covers what that service recorded. Messages sent while disconnected may be
-  missing; the feed inserts a notice when a connection was lost.
-- Emotes animate continuously (≈16 fps cap). An animated emote in view redraws the
-  feed, so idle CPU is higher than with static emotes.
-- streamx uses an unofficial internal GraphQL API; it can change without notice. The
-  client reconnects with backoff and re-fetches history (limited to 500 messages).
-- Badges and avatars are not rendered: Twitch only sends badge names, and resolving
-  them requires a Helix client ID/secret.
+Пользовательская установка (`install.sh`, `~/.local/bin`) обновляет себя сама: при запуске проверяет GitHub Releases, тихо подменяет бинарь и показывает кнопку «перезапустить». Пакетная установка (`/usr/bin`, `makepkg`/pacman) сама себя не трогает — покажет, что вышла новая версия, а обновляться нужно через пакетный менеджер.
+
+В dev-сборках и при `LECHAT_NO_UPDATE=1` проверка обновлений отключена.
+
+## Ограничения
+
+- У IRC-чата Twitch нет истории: добивка идёт с стороннего сервиса и покрывает только то, что он записал. Сообщения, пропущенные во время обрыва, могут потеряться — в ленту вставляется пометка.
+- streamx использует неофициальный внутренний GraphQL API и может измениться без предупреждения. Клиент переподключается с бэкоффом и перезапрашивает историю (до 500 сообщений).
+- Бейджи и аватары не рисуются: Twitch отдаёт только имена бейджей, а для картинок нужен Helix client secret.
+- Анимация эмоутов всегда включена, кадры не чаще ~16 fps (иначе egui перерисовывает всю ленту и ест CPU).
+- Zero-width эмоуты накладываются на предыдущий эмоут; если такой стоит первым в строке — рисуется мелким инлайном.
+
+## Разработка
+
+```bash
+cargo test
+cargo clippy --all-targets -- -D warnings
+cargo build --release
+```
+
+Живые проверки сети (Twitch IRC, streamx, recent-messages) помечены `#[ignore]`:
+
+```bash
+cargo test -- --ignored
+```
