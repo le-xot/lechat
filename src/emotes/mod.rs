@@ -30,14 +30,6 @@ impl EmoteCatalog {
         self.emotes.get(name)
     }
 
-    pub fn len(&self) -> usize {
-        self.emotes.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.emotes.is_empty()
-    }
-
     /// Global set first, channel set on top (channel wins on name collisions).
     pub fn merged(channel: Vec<EmoteInfo>, global: Vec<EmoteInfo>) -> Self {
         let mut catalog = Self::new();

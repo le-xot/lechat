@@ -8,6 +8,7 @@ mod twitch;
 mod ui;
 
 fn main() -> eframe::Result {
+    let _ = rustls::crypto::ring::default_provider().install_default();
     tracing_subscriber::fmt()
         .with_max_level(tracing::Level::INFO)
         .init();

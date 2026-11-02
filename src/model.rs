@@ -67,7 +67,6 @@ pub struct NativeEmote {
 pub enum Entry {
     Msg(Message),
     Note {
-        id: u64,
         text: String,
         ts_ms: i64,
     },

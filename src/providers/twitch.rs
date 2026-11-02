@@ -193,7 +193,7 @@ async fn session(
             let catalog = catalog.read().unwrap();
             if let Some(message) = line_to_message(&line, &catalog) {
                 drop(catalog);
-                let _ = tx.send(ProviderEvent::Message(index, message));
+                let _ = tx.send(ProviderEvent::Message(message));
                 ctx.request_repaint();
             }
         }
@@ -231,5 +231,36 @@ mod tests {
         assert_eq!(msg.author.color, Some([0x2e, 0x8b, 0x57]));
         assert_eq!(msg.ts_ms, 1793656722613);
         assert!(matches!(&msg.parts[0], Part::Text(t) if t == "TWEAK SHIIII"));
+    }
+
+    #[tokio::test]
+    #[ignore = "живое подключение к Twitch IRC"]
+    async fn live_handshake_yields_room_id() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let (mut ws, _) = tokio_tungstenite::connect_async(IRC_URL).await.unwrap();
+        for line in handshake_lines("etonelexot", "justinfan424242") {
+            ws.send(WsMessage::Text(line.into())).await.unwrap();
+        }
+
+        let mut room_id = None;
+        for _ in 0..40 {
+            let frame = tokio::time::timeout(Duration::from_secs(3), ws.next())
+                .await
+                .expect("тишина от Twitch");
+            let Some(Ok(WsMessage::Text(text))) = frame else {
+                continue;
+            };
+            for raw in text.lines() {
+                if let Some(line) = parse_line(raw)
+                    && let Some(id) = parse_room_id(&line)
+                {
+                    room_id = Some(id);
+                }
+            }
+            if room_id.is_some() {
+                break;
+            }
+        }
+        assert_eq!(room_id.as_deref(), Some("1263747798"));
     }
 }

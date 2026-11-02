@@ -34,9 +34,9 @@ impl ConnectionStatus {
 #[derive(Debug)]
 pub enum ProviderEvent {
     Status(usize, ConnectionStatus),
-    Message(usize, Message),
-    History(usize, Vec<Message>),
-    Note(usize, String),
+    Message(Message),
+    History(Vec<Message>),
+    Note(String),
     RoomId(usize, String),
     Error(usize, String),
 }

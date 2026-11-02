@@ -7,7 +7,7 @@ use tokio::task::JoinHandle;
 use crate::config::{Config, PanelCfg, PanelKind};
 use crate::emotes::{EmoteCatalog, seventv};
 use crate::model::{Entry, Platform};
-use crate::providers::{self, ConnectionStatus, ProviderEvent, streamx, twitch};
+use crate::providers::{ConnectionStatus, ProviderEvent, streamx, twitch};
 use crate::ui::timeline::Timeline;
 use crate::ui::{self, row, NEAR_BOTTOM_PX};
 
@@ -29,7 +29,6 @@ pub struct App {
     ctx: egui::Context,
     handles: Vec<Option<JoinHandle<()>>>,
     http: reqwest::Client,
-    note_seq: u64,
     pending_reconnects: Vec<bool>,
     spawn_enabled: bool,
 }
@@ -81,7 +80,6 @@ impl App {
             ctx,
             handles: Vec::new(),
             http: reqwest::Client::new(),
-            note_seq: 0,
             pending_reconnects,
             spawn_enabled: false,
         }
@@ -95,9 +93,6 @@ impl App {
             handle.abort();
         }
         self.handles = (0..self.sources.len()).map(|_| None).collect();
-        if self.pending_reconnects.len() != self.sources.len() {
-            self.pending_reconnects = vec![false; self.sources.len()];
-        }
         for index in 0..self.sources.len() {
             self.spawn_source(index);
         }
@@ -127,9 +122,7 @@ impl App {
     }
 
     pub fn request_reconnect_all(&mut self) {
-        for pending in &mut self.pending_reconnects {
-            *pending = true;
-        }
+        self.pending_reconnects.fill(true);
         for source in &mut self.sources {
             source.status = ConnectionStatus::Connecting;
             source.catalog_loading = false;
@@ -137,6 +130,7 @@ impl App {
         self.spawn_all();
     }
 
+    #[cfg(test)]
     pub fn pending_reconnects(&self) -> Vec<bool> {
         self.pending_reconnects.clone()
     }
@@ -164,18 +158,17 @@ impl App {
                 }
             }
             ProviderEvent::RoomId(index, room_id) => self.spawn_catalog(index, room_id),
-            ProviderEvent::Note(_, text) => {
-                self.note_seq += 1;
+            ProviderEvent::Note(text) => {
                 let ts = chrono::Utc::now().timestamp_millis();
-                self.timeline.push_note(self.note_seq, text, ts);
+                self.timeline.push_note(text, ts);
             }
-            ProviderEvent::Message(_, message) => {
+            ProviderEvent::Message(message) => {
                 self.timeline.insert_sorted(Entry::Msg(message));
                 if !self.timeline.follow {
                     self.timeline.unread += 1;
                 }
             }
-            ProviderEvent::History(_, messages) => {
+            ProviderEvent::History(messages) => {
                 for message in messages {
                     self.timeline.insert_sorted(Entry::Msg(message));
                 }
@@ -221,18 +214,6 @@ impl App {
             }
         });
     }
-
-    fn channel_for(&self, platform: Platform) -> String {
-        self.sources
-            .iter()
-            .find(|source| match (source.cfg.kind.clone(), platform) {
-                (PanelKind::Twitch, Platform::Twitch) => true,
-                (PanelKind::Streamx, Platform::Streamx) => true,
-                _ => false,
-            })
-            .map(|source| source.cfg.channel.clone())
-            .unwrap_or_default()
-    }
 }
 
 impl eframe::App for App {
@@ -268,9 +249,10 @@ fn status_bar(ui: &mut egui::Ui, sources: &[SourceState], config_error: Option<&
         ui.label(egui::RichText::new("lechat").strong());
         ui.separator();
         for source in sources {
+            let platform = Platform::from(source.cfg.kind.clone());
             ui::source_badge(
                 ui,
-                source.cfg.kind.clone().into(),
+                platform,
                 &format!("{} #{}", source.cfg.kind.label(), source.cfg.channel),
             );
             ui.label(
@@ -296,6 +278,12 @@ fn status_bar(ui: &mut egui::Ui, sources: &[SourceState], config_error: Option<&
                     .color(egui::Color32::from_gray(140)),
             );
             ui.separator();
+        }
+        let animate = crate::images::ANIMATION_ENABLED.load(std::sync::atomic::Ordering::Relaxed);
+        let mut animate_now = animate;
+        if ui.checkbox(&mut animate_now, "анимация").changed() {
+            crate::images::ANIMATION_ENABLED.store(animate_now, std::sync::atomic::Ordering::Relaxed);
+            ui.ctx().request_repaint();
         }
         if let Some(error) = config_error {
             ui.colored_label(egui::Color32::from_rgb(0xE0, 0x5C, 0x5C), error);
@@ -338,7 +326,7 @@ fn feed(ui: &mut egui::Ui, timeline: &mut Timeline, channels: &[(Platform, Strin
         }
     });
 
-    let from_end = output.content_size.y - (output.state.offset().y + output.inner_rect.height());
+    let from_end = output.content_size.y - (output.state.unclamped_offset().y + output.inner_rect.height());
     if ui::near_bottom(from_end) {
         timeline.follow = true;
         timeline.unread = 0;
@@ -368,14 +356,6 @@ impl From<PanelKind> for Platform {
     }
 }
 
-pub fn channel_hint(sources: &[SourceState], platform: Platform) -> String {
-    sources
-        .iter()
-        .find(|source| Platform::from(source.cfg.kind.clone()) == platform)
-        .map(|source| format!("#{}", source.cfg.channel))
-        .unwrap_or_default()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -403,7 +383,7 @@ mod tests {
     fn apply_event_bumps_unread_when_not_following() {
         let mut app = test_app();
         app.timeline.follow = false;
-        app.apply_event(ProviderEvent::Message(0, msg("m1")));
+        app.apply_event(ProviderEvent::Message(msg("m1")));
         assert_eq!(app.timeline.len(), 1);
         assert_eq!(app.timeline.unread, 1);
     }
@@ -419,7 +399,7 @@ mod tests {
     fn history_does_not_bump_unread() {
         let mut app = test_app();
         app.timeline.follow = true;
-        app.apply_event(ProviderEvent::History(1, vec![msg("h1"), msg("h2")]));
+        app.apply_event(ProviderEvent::History(vec![msg("h1"), msg("h2")]));
         assert_eq!(app.timeline.len(), 2);
         assert_eq!(app.timeline.unread, 0);
     }

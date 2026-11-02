@@ -26,10 +26,10 @@ impl Timeline {
     }
 
     pub fn insert_sorted(&mut self, entry: Entry) {
-        if let Entry::Msg(message) = &entry {
-            if self.contains(message.platform, &message.id) {
-                return;
-            }
+        if let Entry::Msg(message) = &entry
+            && self.contains(message.platform, &message.id)
+        {
+            return;
         }
         let ts = entry.ts_ms();
         let position = self
@@ -43,8 +43,8 @@ impl Timeline {
         }
     }
 
-    pub fn push_note(&mut self, id: u64, text: String, ts_ms: i64) {
-        self.insert_sorted(Entry::Note { id, text, ts_ms });
+    pub fn push_note(&mut self, text: String, ts_ms: i64) {
+        self.insert_sorted(Entry::Note { text, ts_ms });
     }
 
     pub fn contains(&self, platform: Platform, id: &str) -> bool {
@@ -55,14 +55,17 @@ impl Timeline {
         })
     }
 
+    #[allow(dead_code)]
     pub fn len(&self) -> usize {
         self.entries.len()
     }
 
+    #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
 
+    #[allow(dead_code)]
     pub fn messages(&self) -> impl Iterator<Item = &Message> {
         self.entries.iter().filter_map(Entry::message)
     }

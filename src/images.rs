@@ -1,5 +1,6 @@
 use std::io::Cursor;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use egui::{
@@ -8,6 +9,8 @@ use egui::{
     mutex::Mutex,
 };
 use image_webp::WebPDecoder;
+
+pub static ANIMATION_ENABLED: AtomicBool = AtomicBool::new(false);
 
 pub fn is_webp(bytes: &[u8]) -> bool {
     bytes.len() >= 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP"
@@ -34,20 +37,22 @@ impl AnimatedWebp {
             let count = decoder.num_frames().max(1);
             for _ in 0..count {
                 let delay_ms = decoder.read_frame(&mut buffer).map_err(|e| e.to_string())?;
-                frames.push(Arc::new(ColorImage::from_rgba_unmultiplied(
-                    [width as usize, height as usize],
+                frames.push(Arc::new(to_color_image(
                     &buffer,
-                )));
+                    width as usize,
+                    height as usize,
+                )?));
                 durations.push(Duration::from_millis(u64::from(delay_ms.max(20))));
             }
         } else {
             decoder
                 .read_image(&mut buffer)
                 .map_err(|e| e.to_string())?;
-            frames.push(Arc::new(ColorImage::from_rgba_unmultiplied(
-                [width as usize, height as usize],
+            frames.push(Arc::new(to_color_image(
                 &buffer,
-            )));
+                width as usize,
+                height as usize,
+            )?));
             durations.push(Duration::from_secs(1));
         }
 
@@ -67,6 +72,29 @@ impl AnimatedWebp {
             .map(|frame| frame.pixels.len() * std::mem::size_of::<egui::Color32>())
             .sum()
     }
+}
+
+fn to_color_image(buffer: &[u8], width: usize, height: usize) -> Result<ColorImage, String> {
+    let pixels = width * height;
+    if buffer.len() >= pixels * 4 {
+        return Ok(ColorImage::from_rgba_unmultiplied(
+            [width, height],
+            &buffer[..pixels * 4],
+        ));
+    }
+    if buffer.len() >= pixels * 3 {
+        let mut rgba = Vec::with_capacity(pixels * 4);
+        for chunk in buffer[..pixels * 3].chunks_exact(3) {
+            rgba.extend_from_slice(&[chunk[0], chunk[1], chunk[2], 255]);
+        }
+        return Ok(ColorImage::from_rgba_unmultiplied([width, height], &rgba));
+    }
+    Err(format!(
+        "webp: неожиданный размер буфера {} для {}x{}",
+        buffer.len(),
+        width,
+        height
+    ))
 }
 
 #[derive(Default)]
@@ -100,17 +128,20 @@ impl ImageLoader for WebpAnimationLoader {
                     return Err(LoadError::NotSupported);
                 }
                 let decoded = AnimatedWebp::decode(&bytes).map(Arc::new);
-                if let Ok(image) = &decoded {
-                    let durations = image.durations.clone();
-                    ctx.data_mut(|data| {
-                        *data.get_temp_mut_or_default(Id::unique(uri)) = durations;
-                    });
-                }
                 match decoded {
                     Ok(image) => {
+                        let animate = ANIMATION_ENABLED.load(Ordering::Relaxed);
+                        let durations = if animate {
+                            image.durations.clone()
+                        } else {
+                            FrameDurations::new(Vec::new())
+                        };
+                        ctx.data_mut(|data| {
+                            *data.get_temp_mut_or_default(Id::unique(uri)) = durations;
+                        });
                         self.cache.lock().insert(uri.to_string(), image.clone());
                         Ok(ImagePoll::Ready {
-                            image: image.frame(index),
+                            image: image.frame(if animate { index } else { 0 }),
                         })
                     }
                     Err(err) => Err(LoadError::Loading(err)),

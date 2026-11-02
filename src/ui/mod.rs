@@ -15,6 +15,7 @@ pub fn near_bottom(offset_from_end: f32) -> bool {
     offset_from_end <= NEAR_BOTTOM_PX
 }
 
+#[allow(dead_code)]
 pub fn zero_width_rect(
     previous: Option<egui::Rect>,
     cursor: egui::Pos2,

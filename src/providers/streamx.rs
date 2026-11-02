@@ -220,10 +220,7 @@ pub async fn run(
             Ok(()) => attempt = 0,
             Err(err) => {
                 let _ = tx.send(ProviderEvent::Error(index, format!("{err:#}")));
-                let _ = tx.send(ProviderEvent::Note(
-                    index,
-                    "соединение с streamx потеряно, часть сообщений могла пропасть".to_string(),
-                ));
+                let _ = tx.send(ProviderEvent::Note("соединение с streamx потеряно, часть сообщений могла пропасть".to_string()));
             }
         }
         if tx.is_closed() {
@@ -244,7 +241,7 @@ async fn session(
 ) -> anyhow::Result<()> {
     let channel_id = client.channel_id(&spec.channel).await?;
     let history = client.history(&channel_id, 500).await?;
-    let _ = tx.send(ProviderEvent::History(index, history));
+    let _ = tx.send(ProviderEvent::History(history));
     ctx.request_repaint();
 
     let (mut ws, _) = tokio_tungstenite::connect_async(client.ws_url()?).await?;
@@ -281,7 +278,7 @@ async fn session(
             }
             "next" => {
                 if let Some(message) = map_message(&value["payload"]["data"]["chatMessages"]) {
-                    let _ = tx.send(ProviderEvent::Message(index, message));
+                    let _ = tx.send(ProviderEvent::Message(message));
                     ctx.request_repaint();
                 }
             }
@@ -337,5 +334,16 @@ mod tests {
         assert_eq!(client.ws_url().unwrap(), "wss://streamx.satont.dev/api/query");
         let local = StreamxClient::new("http://localhost:3000/");
         assert_eq!(local.ws_url().unwrap(), "ws://localhost:3000/api/query");
+    }
+
+    #[tokio::test]
+    #[ignore = "живой запрос к streamx"]
+    async fn live_channel_and_history() {
+        let client = StreamxClient::new("https://streamx.satont.dev");
+        let id = client.channel_id("le-xot").await.unwrap();
+        assert_eq!(id, "30b9ec57-9ef7-4992-b114-f0f380bc60f6");
+        let history = client.history(&id, 5).await.unwrap();
+        assert!(!history.is_empty());
+        assert!(history.iter().all(|message| message.platform == Platform::Streamx));
     }
 }
