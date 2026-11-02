@@ -1,6 +1,7 @@
 mod config;
 mod emotes;
 mod model;
+mod providers;
 mod twitch;
 
 fn main() -> eframe::Result {
