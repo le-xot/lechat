@@ -335,12 +335,18 @@ impl eframe::App for App {
 
         let sources = &self.sources;
         let mut settings_open = self.settings_open;
+        let mut refresh = false;
         egui::Panel::top("lechat-status").show(ui, |ui| {
-            if status_bar(ui, sources, self.config_error.as_deref()) {
+            let (gear, reload) = status_bar(ui, sources, self.config_error.as_deref());
+            if gear {
                 settings_open = !settings_open;
             }
+            refresh = reload;
         });
         self.settings_open = settings_open;
+        if refresh {
+            self.request_reconnect_all();
+        }
 
         if self.settings_open {
             let ctx = ui.ctx().clone();
@@ -355,9 +361,14 @@ impl eframe::App for App {
     }
 }
 
-fn status_bar(ui: &mut egui::Ui, sources: &[SourceState], config_error: Option<&str>) -> bool {
+fn status_bar(
+    ui: &mut egui::Ui,
+    sources: &[SourceState],
+    config_error: Option<&str>,
+) -> (bool, bool) {
     ui.add_space(4.0);
     let mut gear_clicked = false;
+    let mut refresh_clicked = false;
     ui.horizontal_wrapped(|ui| {
         if ui.button("⚙").on_hover_text("настройки").clicked() {
             gear_clicked = true;
@@ -395,9 +406,18 @@ fn status_bar(ui: &mut egui::Ui, sources: &[SourceState], config_error: Option<&
         if let Some(error) = config_error {
             ui.colored_label(egui::Color32::from_rgb(0xE0, 0x5C, 0x5C), error);
         }
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if ui
+                .button("↻")
+                .on_hover_text("переподключить всё (F5)")
+                .clicked()
+            {
+                refresh_clicked = true;
+            }
+        });
     });
     ui.add_space(4.0);
-    gear_clicked
+    (gear_clicked, refresh_clicked)
 }
 
 fn feed(ui: &mut egui::Ui, timeline: &mut Timeline, appearance: &Appearance) {
