@@ -1,4 +1,6 @@
 mod config;
+mod emotes;
+mod model;
 
 fn main() -> eframe::Result {
     let options = eframe::NativeOptions {
