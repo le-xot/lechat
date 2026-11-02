@@ -32,6 +32,8 @@ height = 760.0
 [appearance]
 font_size = 14.0
 # font_family = "Cantarell"   # omit for the built-in font
+show_time = true
+show_seconds = false
 
 [[panel]]
 kind = "twitch"
@@ -48,8 +50,9 @@ message time. Add more panels to follow more channels.
 
 ## Controls
 
-- **⚙** in the header — font size (11–24) and any installed font with Cyrillic
-  coverage; changes apply immediately and are saved to the config.
+- **⚙** in the header — font size (11–24), any installed font with Cyrillic coverage,
+  and timestamps (hide, or show with seconds). Changes apply immediately and are saved
+  to the config.
 - **F5** — reconnect every source.
 - Scroll up to pause auto-follow; the “↓ N новых” button jumps back to the live edge.
 

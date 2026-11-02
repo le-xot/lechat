@@ -1,9 +1,10 @@
+use crate::config::Appearance;
 use crate::model::{Entry, Message, Part};
 use crate::ui;
 
-pub fn entry_ui(ui: &mut egui::Ui, entry: &Entry, channel: &str) {
+pub fn entry_ui(ui: &mut egui::Ui, entry: &Entry, channel: &str, appearance: &Appearance) {
     match entry {
-        Entry::Msg(message) => message_ui(ui, message, channel),
+        Entry::Msg(message) => message_ui(ui, message, channel, appearance),
         Entry::Note { text, .. } => {
             ui.add_space(2.0);
             ui.vertical_centered(|ui| {
@@ -19,7 +20,12 @@ pub fn entry_ui(ui: &mut egui::Ui, entry: &Entry, channel: &str) {
     }
 }
 
-pub fn message_ui(ui: &mut egui::Ui, message: &Message, channel: &str) {
+pub fn message_ui(
+    ui: &mut egui::Ui,
+    message: &Message,
+    channel: &str,
+    appearance: &Appearance,
+) {
     let line_height = ui.text_style_height(&egui::TextStyle::Body);
     let small_size = ui
         .style()
@@ -37,18 +43,14 @@ pub fn message_ui(ui: &mut egui::Ui, message: &Message, channel: &str) {
             &format!("{} · #{}", message.platform.label(), channel),
         );
 
-        let time = chrono::DateTime::from_timestamp_millis(message.ts_ms)
-            .map(|time| {
-                time.with_timezone(&chrono::Local)
-                    .format("%H:%M")
-                    .to_string()
-            })
-            .unwrap_or_else(|| "--:--".to_string());
-        ui.label(
-            egui::RichText::new(time)
-                .size(small_size)
-                .color(egui::Color32::from_gray(120)),
-        );
+        if appearance.show_time {
+            let time = ui::format_time(message.ts_ms, appearance.show_seconds);
+            ui.label(
+                egui::RichText::new(time)
+                    .size(small_size)
+                    .color(egui::Color32::from_gray(120)),
+            );
+        }
 
         let color = message
             .author

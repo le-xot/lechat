@@ -67,6 +67,14 @@ pub struct Appearance {
     /// `None` keeps the built-in font.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub font_family: Option<String>,
+    #[serde(default = "default_true")]
+    pub show_time: bool,
+    #[serde(default)]
+    pub show_seconds: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 fn default_font_size() -> f32 {
@@ -78,6 +86,8 @@ impl Default for Appearance {
         Self {
             font_size: default_font_size(),
             font_family: None,
+            show_time: true,
+            show_seconds: false,
         }
     }
 }
@@ -208,11 +218,15 @@ channel = "a"
 [appearance]
 font_size = 17.5
 font_family = "DejaVu Sans"
+show_time = false
+show_seconds = true
 "#,
         )
         .unwrap();
         assert_eq!(cfg.appearance.font_size, 17.5);
         assert_eq!(cfg.appearance.font_family.as_deref(), Some("DejaVu Sans"));
+        assert!(!cfg.appearance.show_time);
+        assert!(cfg.appearance.show_seconds);
 
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.toml");
@@ -235,6 +249,8 @@ channel = "a"
         .unwrap();
         assert_eq!(cfg.appearance.font_size, 14.0);
         assert!(cfg.appearance.font_family.is_none());
+        assert!(cfg.appearance.show_time);
+        assert!(!cfg.appearance.show_seconds);
     }
 
     #[test]

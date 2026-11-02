@@ -256,6 +256,15 @@ impl App {
                 );
                 changed |= size.changed();
 
+                changed |= ui
+                    .checkbox(&mut appearance.show_time, "показывать время")
+                    .changed();
+                ui.add_enabled_ui(appearance.show_time, |ui| {
+                    changed |= ui
+                        .checkbox(&mut appearance.show_seconds, "с секундами")
+                        .changed();
+                });
+
                 ui.separator();
                 ui.label("шрифт");
                 ui.add(
@@ -339,8 +348,9 @@ impl eframe::App for App {
         }
 
         let timeline = &mut self.timeline;
+        let appearance = &self.appearance;
         egui::CentralPanel::default().show(ui, |ui| {
-            feed(ui, timeline);
+            feed(ui, timeline, appearance);
         });
     }
 }
@@ -399,7 +409,7 @@ fn status_bar(ui: &mut egui::Ui, sources: &[SourceState], config_error: Option<&
     gear_clicked
 }
 
-fn feed(ui: &mut egui::Ui, timeline: &mut Timeline) {
+fn feed(ui: &mut egui::Ui, timeline: &mut Timeline, appearance: &Appearance) {
     if ui.input(|input| input.smooth_scroll_delta.y > 1.0) {
         timeline.follow = false;
     }
@@ -423,7 +433,7 @@ fn feed(ui: &mut egui::Ui, timeline: &mut Timeline) {
                 .message()
                 .map(|message| message.channel.as_str())
                 .unwrap_or("");
-            row::entry_ui(ui, entry, channel);
+            row::entry_ui(ui, entry, channel, appearance);
         }
     });
 

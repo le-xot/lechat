@@ -148,6 +148,7 @@ mod tests {
             &Appearance {
                 font_size: 18.0,
                 font_family: Some("DejaVu Sans".into()),
+                ..Appearance::default()
             },
         );
         apply(
@@ -155,6 +156,7 @@ mod tests {
             &Appearance {
                 font_size: 18.0,
                 font_family: Some("нет-такого-шрифта".into()),
+                ..Appearance::default()
             },
         );
     }

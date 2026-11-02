@@ -6,6 +6,17 @@ use crate::model::Platform;
 pub const NEAR_BOTTOM_PX: f32 = 64.0;
 pub const EMOTE_LINE_FACTOR: f32 = 1.5;
 
+pub fn format_time(ts_ms: i64, with_seconds: bool) -> String {
+    let pattern = if with_seconds { "%H:%M:%S" } else { "%H:%M" };
+    chrono::DateTime::from_timestamp_millis(ts_ms)
+        .map(|time| {
+            time.with_timezone(&chrono::Local)
+                .format(pattern)
+                .to_string()
+        })
+        .unwrap_or_else(|| "--:--".to_string())
+}
+
 pub fn emote_size(line_height: f32, aspect: f32) -> egui::Vec2 {
     let height = line_height * EMOTE_LINE_FACTOR;
     egui::vec2(height * aspect.clamp(0.1, 8.0), height)
@@ -51,6 +62,16 @@ pub fn source_badge(ui: &mut egui::Ui, platform: Platform, tooltip: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn formats_time_with_and_without_seconds() {
+        let minutes = format_time(1_793_656_722_613, false);
+        let seconds = format_time(1_793_656_722_613, true);
+        assert_eq!(minutes.len(), 5);
+        assert_eq!(seconds.len(), 8);
+        assert_eq!(minutes.matches(':').count(), 1);
+        assert_eq!(seconds.matches(':').count(), 2);
+    }
 
     #[test]
     fn emote_keeps_aspect_ratio() {
