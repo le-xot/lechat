@@ -6,7 +6,6 @@ pub fn entry_ui(ui: &mut egui::Ui, entry: &Entry, channel: &str, appearance: &Ap
     match entry {
         Entry::Msg(message) => message_ui(ui, message, channel, appearance),
         Entry::Note { text, .. } => {
-            ui.add_space(2.0);
             ui.vertical_centered(|ui| {
                 ui.label(
                     egui::RichText::new(text)
@@ -26,7 +25,12 @@ pub fn message_ui(
     channel: &str,
     appearance: &Appearance,
 ) {
-    let line_height = ui.text_style_height(&egui::TextStyle::Body);
+    let font_size = ui
+        .style()
+        .text_styles
+        .get(&egui::TextStyle::Body)
+        .map(|font| font.size)
+        .unwrap_or(14.0);
     let small_size = ui
         .style()
         .text_styles
@@ -35,8 +39,10 @@ pub fn message_ui(
         .unwrap_or(11.0);
     let mut previous_emote: Option<egui::Rect> = None;
 
-    ui.horizontal_wrapped(|ui| {
-        ui.spacing_mut().item_spacing.x = 4.0;
+    ui.with_layout(
+        egui::Layout::left_to_right(egui::Align::Center).with_main_wrap(true),
+        |ui| {
+        ui.spacing_mut().item_spacing = egui::vec2(3.0, 0.0);
         ui::source_badge(
             ui,
             message.platform,
@@ -72,40 +78,52 @@ pub fn message_ui(
                     ui.hyperlink_to(url.clone(), url.clone());
                 }
                 Part::Emote(emote) => {
-                    let size = ui::emote_size(line_height, emote.aspect);
-                    if emote.zero_width {
-                        if let Some(previous) = previous_emote
-                            && ui.is_rect_visible(previous)
-                            && paint_zero_width(ui, emote, previous, line_height)
-                        {
-                            continue;
-                        }
-                        ui.add(
-                            egui::Image::new(emote.uri.clone())
-                                .fit_to_exact_size(size * 0.7)
-                                .alt_text(emote.name.clone()),
-                        );
-                    } else {
-                        // Only paint emotes inside the viewport: an animated
-                        // image schedules repaints, and off-screen rows would
-                        // otherwise keep redrawing the whole feed.
-                        let rect =
-                            egui::Rect::from_min_size(ui.cursor().min, size);
-                        if ui.is_rect_visible(rect) {
-                            let response = ui.add(
-                                egui::Image::new(emote.uri.clone())
-                                    .fit_to_exact_size(size)
-                                    .alt_text(emote.name.clone()),
-                            );
-                            previous_emote = Some(response.rect);
-                        } else {
-                            ui.allocate_exact_size(size, egui::Sense::hover());
-                        }
+                    let size = ui::emote_size(font_size, appearance.emote_scale, emote.aspect);
+                    if emote.zero_width
+                        && let Some(previous) = previous_emote
+                        && ui.is_rect_visible(previous)
+                        && paint_zero_width(
+                            ui,
+                            emote,
+                            previous,
+                            font_size * appearance.emote_scale,
+                            appearance.emote_offset,
+                        )
+                    {
+                        continue;
                     }
+                    let rect = paint_emote(ui, emote, size, appearance.emote_offset);
+                    previous_emote = Some(rect);
                 }
             }
         }
     });
+}
+
+/// Reserves the emote box and paints the image with a vertical nudge, so the
+/// row layout stays predictable while the picture can be centred by hand.
+fn paint_emote(
+    ui: &mut egui::Ui,
+    emote: &crate::model::EmotePart,
+    size: egui::Vec2,
+    offset: f32,
+) -> egui::Rect {
+    let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
+    let image_rect = rect.translate(egui::vec2(0.0, offset));
+    if ui.is_rect_visible(image_rect)
+        && let Ok(egui::load::TexturePoll::Ready { texture }) =
+            egui::Image::new(emote.uri.clone()).load_for_size(ui.ctx(), size)
+    {
+        ui.painter().image(
+            texture.id,
+            image_rect,
+            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+            egui::Color32::WHITE,
+        );
+    } else {
+        ui.ctx().request_repaint();
+    }
+    image_rect
 }
 
 /// Zero-width emotes layer on top of the previous one and advance no space.
@@ -113,12 +131,13 @@ fn paint_zero_width(
     ui: &mut egui::Ui,
     emote: &crate::model::EmotePart,
     previous: egui::Rect,
-    line_height: f32,
+    height: f32,
+    offset: f32,
 ) -> bool {
-    let rect = ui::zero_width_rect(Some(previous), ui.cursor().min, line_height);
-    let image = egui::Image::new(emote.uri.clone());
+    let mut rect = ui::zero_width_rect(Some(previous), ui.cursor().min, height);
+    rect = rect.translate(egui::vec2(0.0, offset));
     let Ok(egui::load::TexturePoll::Ready { texture }) =
-        image.load_for_size(ui.ctx(), rect.size())
+        egui::Image::new(emote.uri.clone()).load_for_size(ui.ctx(), rect.size())
     else {
         return false;
     };

@@ -71,6 +71,20 @@ pub struct Appearance {
     pub show_time: bool,
     #[serde(default)]
     pub show_seconds: bool,
+    #[serde(default = "default_emote_scale")]
+    pub emote_scale: f32,
+    #[serde(default)]
+    pub emote_offset: f32,
+    #[serde(default = "default_row_gap")]
+    pub row_gap: f32,
+}
+
+fn default_row_gap() -> f32 {
+    8.0
+}
+
+fn default_emote_scale() -> f32 {
+    1.8
 }
 
 fn default_true() -> bool {
@@ -88,6 +102,9 @@ impl Default for Appearance {
             font_family: None,
             show_time: true,
             show_seconds: false,
+            emote_scale: default_emote_scale(),
+            emote_offset: 0.0,
+            row_gap: default_row_gap(),
         }
     }
 }
@@ -267,6 +284,7 @@ channel = "a"
         assert!(cfg.appearance.font_family.is_none());
         assert!(cfg.appearance.show_time);
         assert!(!cfg.appearance.show_seconds);
+        assert_eq!(cfg.appearance.emote_scale, 1.8);
     }
 
     #[test]

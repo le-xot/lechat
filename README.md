@@ -51,6 +51,9 @@ font_size = 14.0
 # font_family = "Cantarell"   # можно не указывать — останется встроенный шрифт
 show_time = true
 show_seconds = false
+emote_scale = 1.8
+emote_offset = 0.0
+row_gap = 8.0
 
 [[panel]]
 kind = "twitch"
