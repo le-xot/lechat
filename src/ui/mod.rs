@@ -39,7 +39,7 @@ pub fn format_time(ts_ms: i64, with_seconds: bool) -> String {
 }
 
 pub fn emote_size(font_size: f32, scale: f32, aspect: f32) -> egui::Vec2 {
-    let height = font_size * scale.clamp(0.8, 2.0);
+    let height = font_size * scale.clamp(0.5, 3.0);
     egui::vec2(height * aspect.clamp(0.1, 8.0), height)
 }
 
