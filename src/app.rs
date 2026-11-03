@@ -503,7 +503,7 @@ fn feed(ui: &mut egui::Ui, timeline: &mut Timeline, appearance: &Appearance) {
 
     // Twitch/streamx render chat rows back-to-back; egui's default vertical
     // item spacing makes the feed look airy.
-    ui.spacing_mut().item_spacing.y = 0.0;
+    ui.spacing_mut().item_spacing.y = 8.0;
 
     let scroll = egui::ScrollArea::vertical()
         .auto_shrink([false, false])
