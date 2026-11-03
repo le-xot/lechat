@@ -77,6 +77,8 @@ pub struct Appearance {
     pub emote_offset: f32,
     #[serde(default = "default_row_gap")]
     pub row_gap: f32,
+    #[serde(default = "default_true")]
+    pub show_badges: bool,
 }
 
 fn default_row_gap() -> f32 {
@@ -105,6 +107,7 @@ impl Default for Appearance {
             emote_scale: default_emote_scale(),
             emote_offset: 0.0,
             row_gap: default_row_gap(),
+            show_badges: true,
         }
     }
 }
@@ -285,6 +288,7 @@ channel = "a"
         assert!(cfg.appearance.show_time);
         assert!(!cfg.appearance.show_seconds);
         assert_eq!(cfg.appearance.emote_scale, 1.8);
+        assert!(cfg.appearance.show_badges);
     }
 
     #[test]

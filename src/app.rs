@@ -258,6 +258,9 @@ impl App {
                     )
                     .changed();
                 changed |= ui
+                    .checkbox(&mut appearance.show_badges, "показывать значки платформ")
+                    .changed();
+                changed |= ui
                     .checkbox(&mut updates_check, "проверять обновления")
                     .changed();
                 ui.horizontal(|ui| {

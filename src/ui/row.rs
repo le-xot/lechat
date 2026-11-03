@@ -43,11 +43,13 @@ pub fn message_ui(
         egui::Layout::left_to_right(egui::Align::Center).with_main_wrap(true),
         |ui| {
         ui.spacing_mut().item_spacing = egui::vec2(3.0, 0.0);
-        ui::source_badge(
-            ui,
-            message.platform,
-            &format!("{} · #{}", message.platform.label(), channel),
-        );
+        if appearance.show_badges {
+            ui::source_badge(
+                ui,
+                message.platform,
+                &format!("{} · #{}", message.platform.label(), channel),
+            );
+        }
 
         if appearance.show_time {
             let time = ui::format_time(message.ts_ms, appearance.show_seconds);
