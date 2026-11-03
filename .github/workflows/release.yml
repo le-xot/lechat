@@ -45,6 +45,13 @@ jobs:
       - name: Package (Windows)
         if: runner.os == 'Windows'
         run: |
+          # The icon, version info and file description live in the executable's
+          # resource section (see build.rs); without them Explorer and the task bar
+          # fall back to the generic Windows icon.
+          $info = (Get-Item target/release/lechat.exe).VersionInfo
+          if ($info.FileDescription -ne 'lechat' -or -not $info.FileVersion) {
+            throw "lechat.exe is missing its Windows resources (FileDescription='$($info.FileDescription)', FileVersion='$($info.FileVersion)')"
+          }
           Compress-Archive -Path target/release/lechat.exe, README.md, LICENSE -DestinationPath "${{ matrix.asset }}"
 
       - uses: actions/upload-artifact@v7
