@@ -38,3 +38,6 @@ lto = "fat"
 codegen-units = 1
 debug = false
 strip = "symbols"
+
+[build-dependencies]
+winresource = "0.1.34"

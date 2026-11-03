@@ -21,3 +21,33 @@ jobs:
           shared-key: ci
       - run: cargo test --locked
       - run: cargo clippy --all-targets -- -D warnings
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ci-windows
+      - run: cargo build --locked
+      - name: Check embedded Windows resources
+        shell: pwsh
+        run: |
+          # build.rs must embed the icon and version info, otherwise Explorer,
+          # the task bar and alt-tab fall back to the generic Windows icon.
+          $readobj = Join-Path (& rustc --print sysroot) 'lib\rustlib\x86_64-pc-windows-msvc\bin\llvm-readobj.exe'
+          if (-not (Test-Path $readobj)) {
+            throw "llvm-readobj not found at $readobj"
+          }
+          $resources = (& $readobj --coff-resources target/debug/lechat.exe) -join "`n"
+          if ($LASTEXITCODE -ne 0) {
+            throw "llvm-readobj failed on lechat.exe"
+          }
+          foreach ($type in 'ICON (ID 3)', 'GROUP_ICON (ID 14)', 'VERSIONINFO (ID 16)') {
+            if ($resources -notmatch [regex]::Escape($type)) {
+              throw "lechat.exe has no $type resource"
+            }
+          }
