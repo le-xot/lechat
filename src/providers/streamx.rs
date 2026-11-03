@@ -10,7 +10,7 @@ use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 
 use crate::config::PanelCfg;
 use crate::model::{Author, EmotePart, Message, Part, Platform};
-use crate::providers::{ConnectionStatus, ProviderEvent};
+use crate::providers::{AbortOnDrop, ConnectionStatus, ProviderEvent};
 use crate::util::parse_hex_color;
 
 const PING_EVERY: Duration = Duration::from_secs(25);
@@ -317,18 +317,32 @@ async fn session(
     ws.send(WsMessage::Text(subscription_frame(&channel_id).into()))
         .await?;
     connected.store(true, Ordering::Relaxed);
-    let _ = tx.send(ProviderEvent::Status(index, ConnectionStatus::Connected));
+    let _ = tx.send(ProviderEvent::Status(index, ConnectionStatus::Syncing));
     ctx.request_repaint();
 
-    // Subscribe first, then backfill: frames that arrive while history is in
-    // flight stay queued in the socket and are processed right after.
-    match client.history(&channel_id, 500).await {
-        Ok(history) => {
-            let _ = tx.send(ProviderEvent::History(history));
+    // Subscribe first, then backfill in the background. Frames that arrive
+    // while history is in flight are handled by the read loop below and merged
+    // by timestamp.
+    let history_done = Arc::new(AtomicBool::new(false));
+    let history_job = AbortOnDrop(tokio::spawn({
+        let client = client.clone();
+        let channel_id = channel_id.clone();
+        let tx = tx.clone();
+        let ctx = ctx.clone();
+        let history_done = Arc::clone(&history_done);
+        async move {
+            match client.history(&channel_id, 500).await {
+                Ok(history) => {
+                    let _ = tx.send(ProviderEvent::History(history));
+                    ctx.request_repaint();
+                }
+                Err(err) => tracing::warn!("streamx history: {err:#}"),
+            }
+            history_done.store(true, Ordering::Relaxed);
             ctx.request_repaint();
         }
-        Err(err) => tracing::warn!("streamx history: {err:#}"),
-    }
+    }));
+    let mut ready_sent = false;
 
     let _ = &spec;
     let mut last_frame = Instant::now();
@@ -344,7 +358,19 @@ async fn session(
             next_ping = now + PING_EVERY;
         }
 
-        let wait = (next_ping - now).max(Duration::from_secs(1));
+        // The read loop owns the ready transition, so a backfill that outlived
+        // its session cannot report ready for a newer one.
+        if !ready_sent && (history_done.load(Ordering::Relaxed) || history_job.0.is_finished()) {
+            ready_sent = true;
+            let _ = tx.send(ProviderEvent::Status(index, ConnectionStatus::Connected));
+            ctx.request_repaint();
+        }
+
+        let wait = if ready_sent {
+            (next_ping - now).max(Duration::from_secs(1))
+        } else {
+            Duration::from_secs(1)
+        };
         let frame = match tokio::time::timeout(wait, ws.next()).await {
             Err(_) => continue,
             Ok(None) => anyhow::bail!("streamx закрыл соединение"),
