@@ -24,10 +24,17 @@ curl -fsSL "$url" -o "$tmp/lechat.tar.gz"
 tar -xzf "$tmp/lechat.tar.gz" -C "$tmp"
 
 install -Dm755 "$tmp/lechat" "$BIN_DIR/lechat"
-install -Dm644 "$tmp/lechat.png" "$DATA_DIR/icons/hicolor/256x256/apps/lechat.png"
+for icon in "$tmp"/icons/*x*/apps/lechat.png; do
+    size="$(basename "$(dirname "$(dirname "$icon")")")"
+    install -Dm644 "$icon" "$DATA_DIR/icons/hicolor/${size}/apps/lechat.png"
+done
 mkdir -p "$DATA_DIR/applications"
 sed "s|^Exec=.*|Exec=${BIN_DIR}/lechat|" "$tmp/lechat.desktop" \
     > "$DATA_DIR/applications/lechat.desktop"
+
+if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+    gtk-update-icon-cache -f -t "$DATA_DIR/icons/hicolor" >/dev/null 2>&1 || true
+fi
 
 echo "installed $(command -v lechat || echo "$BIN_DIR/lechat")"
 echo "auto-update is enabled for user installs; run lechat and it will keep itself current"

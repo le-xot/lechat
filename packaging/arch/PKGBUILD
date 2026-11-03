@@ -16,6 +16,10 @@ sha256sums=('SKIP') # filled in when a release is published
 package() {
     install -Dm755 "${srcdir}/lechat" "${pkgdir}/usr/bin/lechat"
     install -Dm644 "${srcdir}/lechat.desktop" "${pkgdir}/usr/share/applications/lechat.desktop"
-    install -Dm644 "${srcdir}/lechat.png" "${pkgdir}/usr/share/icons/hicolor/256x256/apps/lechat.png"
+    for size in 16 24 32 48 64 128 256 512; do
+        install -Dm644 "${srcdir}/icons/${size}x${size}/apps/lechat.png" \
+            "${pkgdir}/usr/share/icons/hicolor/${size}x${size}/apps/lechat.png"
+    done
     install -Dm644 "${srcdir}/README.md" "${pkgdir}/usr/share/doc/lechat/README.md"
+    install -Dm644 "${srcdir}/LICENSE" "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
 }

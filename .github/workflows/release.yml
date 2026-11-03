@@ -29,13 +29,14 @@ jobs:
         run: |
           mkdir -p staging
           cp target/release/lechat staging/
-          cp assets/lechat.desktop assets/lechat.png README.md staging/
+          cp assets/lechat.desktop assets/lechat.png README.md LICENSE staging/
+          cp -r assets/icons staging/
           tar -czf "${{ matrix.asset }}" -C staging .
 
       - name: Package (Windows)
         if: runner.os == 'Windows'
         run: |
-          Compress-Archive -Path target/release/lechat.exe, README.md -DestinationPath "${{ matrix.asset }}"
+          Compress-Archive -Path target/release/lechat.exe, README.md, LICENSE -DestinationPath "${{ matrix.asset }}"
 
       - uses: actions/upload-artifact@v4
         with:

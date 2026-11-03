@@ -6,3 +6,4 @@ Exec=lechat
 Icon=lechat
 Terminal=false
 Categories=Network;Chat;
+StartupWMClass=lechat
