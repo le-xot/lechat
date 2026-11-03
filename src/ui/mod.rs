@@ -6,16 +6,26 @@ use crate::model::Platform;
 pub const NEAR_BOTTOM_PX: f32 = 64.0;
 pub const EMOTE_LINE_FACTOR: f32 = 1.5;
 
-/// Keeps platform-provided nick colours readable on the dark background.
-pub fn readable_nick_color([r, g, b]: [u8; 3]) -> egui::Color32 {
-    let luminance = 0.2126 * r as f32 + 0.7152 * g as f32 + 0.0722 * b as f32;
-    const MIN: f32 = 120.0;
-    if luminance >= MIN {
-        return egui::Color32::from_rgb(r, g, b);
+/// Relative luminance of an sRGB colour (0..1).
+pub fn luminance([r, g, b]: [u8; 3]) -> f32 {
+    fn linear(channel: u8) -> f32 {
+        let value = channel as f32 / 255.0;
+        if value <= 0.03928 {
+            value / 12.92
+        } else {
+            ((value + 0.055) / 1.055).powf(2.4)
+        }
     }
-    let t = ((MIN - luminance) / (255.0 - luminance).max(1.0)).clamp(0.0, 0.75);
-    let lift = |channel: u8| (channel as f32 + (255.0 - channel as f32) * t) as u8;
-    egui::Color32::from_rgb(lift(r), lift(g), lift(b))
+    0.2126 * linear(r) + 0.7152 * linear(g) + 0.0722 * linear(b)
+}
+
+/// White or near-black text that stays readable on the given background.
+pub fn contrasting_text([r, g, b]: [u8; 3]) -> egui::Color32 {
+    if luminance([r, g, b]) > 0.4 {
+        egui::Color32::from_rgb(0x10, 0x12, 0x14)
+    } else {
+        egui::Color32::WHITE
+    }
 }
 
 pub fn format_time(ts_ms: i64, with_seconds: bool) -> String {
@@ -66,7 +76,7 @@ pub fn source_badge(ui: &mut egui::Ui, platform: Platform, tooltip: &str) {
         egui::Align2::CENTER_CENTER,
         platform.badge_letter(),
         egui::FontId::proportional(10.0),
-        egui::Color32::WHITE,
+        contrasting_text(platform.badge_color()),
     );
     response.on_hover_text(tooltip);
 }
@@ -76,11 +86,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn dark_nick_colors_are_lifted() {
-        let dark = readable_nick_color([0, 0, 120]);
-        assert!(dark.b() > 120, "тёмно-синий должен стать светлее");
-        let bright = readable_nick_color([0xFF, 0xB8, 0x6C]);
-        assert_eq!(bright, egui::Color32::from_rgb(0xFF, 0xB8, 0x6C));
+    fn badge_text_contrasts_with_background() {
+        assert_eq!(
+            contrasting_text([0x91, 0x46, 0xFF]),
+            egui::Color32::WHITE
+        );
+        assert_eq!(
+            contrasting_text([0x00, 0xDC, 0x82]),
+            egui::Color32::from_rgb(0x10, 0x12, 0x14)
+        );
+        assert!(luminance([0, 0, 0]) < 0.01);
+        assert!(luminance([255, 255, 255]) > 0.99);
     }
 
     #[test]
