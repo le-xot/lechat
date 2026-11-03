@@ -24,10 +24,10 @@ curl -fsSL "$url" -o "$tmp/lechat.tar.gz"
 tar -xzf "$tmp/lechat.tar.gz" -C "$tmp"
 
 install -Dm755 "$tmp/lechat" "$BIN_DIR/lechat"
-for icon in "$tmp"/icons/*x*/apps/lechat.png; do
+while IFS= read -r icon; do
     size="$(basename "$(dirname "$(dirname "$icon")")")"
     install -Dm644 "$icon" "$DATA_DIR/icons/hicolor/${size}/apps/lechat.png"
-done
+done < <(find "$tmp/icons" -path '*/apps/lechat.png' -type f)
 mkdir -p "$DATA_DIR/applications"
 sed "s|^Exec=.*|Exec=${BIN_DIR}/lechat|" "$tmp/lechat.desktop" \
     > "$DATA_DIR/applications/lechat.desktop"
