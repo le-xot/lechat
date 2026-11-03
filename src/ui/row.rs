@@ -25,7 +25,6 @@ pub fn message_ui(
     channel: &str,
     appearance: &Appearance,
 ) {
-    let line_height = ui.text_style_height(&egui::TextStyle::Body);
     let font_size = ui
         .style()
         .text_styles
@@ -80,19 +79,18 @@ pub fn message_ui(
                 }
                 Part::Emote(emote) => {
                     let size = ui::emote_size(font_size, appearance.emote_scale, emote.aspect);
-                    if emote.zero_width {
-                        if let Some(previous) = previous_emote
-                            && ui.is_rect_visible(previous)
-                            && paint_zero_width(
-                                ui,
-                                emote,
-                                previous,
-                                font_size * appearance.emote_scale,
-                                appearance.emote_offset,
-                            )
-                        {
-                            continue;
-                        }
+                    if emote.zero_width
+                        && let Some(previous) = previous_emote
+                        && ui.is_rect_visible(previous)
+                        && paint_zero_width(
+                            ui,
+                            emote,
+                            previous,
+                            font_size * appearance.emote_scale,
+                            appearance.emote_offset,
+                        )
+                    {
+                        continue;
                     }
                     let rect = paint_emote(ui, emote, size, appearance.emote_offset);
                     previous_emote = Some(rect);
