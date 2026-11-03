@@ -149,6 +149,13 @@ impl App {
         self.pending_reconnects.clone()
     }
 
+    fn start_update_check(&mut self) {
+        let (tx, rx) = mpsc::unbounded_channel();
+        self.update_rx = Some(rx);
+        self.update_state = UpdateState::Checking;
+        std::thread::spawn(move || update::check(tx));
+    }
+
     fn drain_events(&mut self) {
         let mut applied = false;
         while let Ok(event) = self.rx.try_recv() {
@@ -203,6 +210,8 @@ impl App {
 
         let mut appearance = self.appearance.clone();
         let mut updates_check = self.config.updates.check;
+        let mut check_now = false;
+        let update_running = self.update_state == UpdateState::Checking;
         let mut query = self.font_query.clone();
         let mut open = self.settings_open;
         let mut changed = false;
@@ -230,6 +239,41 @@ impl App {
                 changed |= ui
                     .checkbox(&mut updates_check, "проверять обновления")
                     .changed();
+                ui.horizontal(|ui| {
+                    if ui
+                        .add_enabled(!update_running, egui::Button::new("проверить обновления"))
+                        .clicked()
+                    {
+                        check_now = true;
+                    }
+                    match &self.update_state {
+                        UpdateState::Ready(version) => {
+                            ui.label(format!("готово: {version}"));
+                        }
+                        UpdateState::Available(version) => {
+                            ui.label(format!("доступно: {version}"));
+                        }
+                        UpdateState::Error(error) => {
+                            ui.label(format!("ошибка: {error}"));
+                        }
+                        UpdateState::UpToDate => {
+                            ui.label("обновлений нет");
+                        }
+                        UpdateState::Checking => {
+                            ui.label("проверяю…");
+                        }
+                        UpdateState::Disabled => {
+                            ui.label("проверка отключена");
+                        }
+                    }
+                });
+                if let Some(path) = crate::update::update_log_path() {
+                    ui.label(
+                        egui::RichText::new(format!("лог: {}", path.display()))
+                            .size(10.0)
+                            .color(egui::Color32::from_gray(120)),
+                    );
+                }
 
                 ui.separator();
                 ui.label("шрифт");
@@ -284,6 +328,9 @@ impl App {
         if self.config.updates.check != updates_check {
             self.config.updates.check = updates_check;
             changed = true;
+        }
+        if check_now {
+            self.start_update_check();
         }
         if changed {
             self.appearance = appearance;
