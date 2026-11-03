@@ -59,9 +59,10 @@ impl App {
 
         let mut app = Self::build(config, cc.egui_ctx.clone());
         app.config_error = config_error;
-        app.webp_loader = Some(webp_loader);
+        app.webp_loader = Some(webp_loader.clone());
         app.spawn_enabled = true;
         crate::settings::apply(&cc.egui_ctx, &app.appearance);
+        webp_loader.set_animation(app.appearance.animate_emotes, app.appearance.emote_fps);
         if app.config.updates.check {
             let (tx, rx) = mpsc::unbounded_channel();
             app.update_rx = Some(rx);
@@ -301,6 +302,21 @@ impl App {
                     )
                     .changed();
                 changed |= ui
+                    .checkbox(&mut appearance.animate_emotes, "анимация эмоутов")
+                    .changed();
+                ui.add_enabled_ui(appearance.animate_emotes, |ui| {
+                    changed |= ui
+                        .add(
+                            egui::Slider::new(
+                                &mut appearance.emote_fps,
+                                crate::images::MIN_FPS..=crate::images::MAX_FPS,
+                            )
+                            .step_by(1.0)
+                            .text("кадров в секунду"),
+                        )
+                        .changed();
+                });
+                changed |= ui
                     .add(
                         egui::Slider::new(&mut appearance.row_gap, 0.0..=24.0)
                             .step_by(0.5)
@@ -413,6 +429,9 @@ impl App {
             self.appearance = appearance;
             self.config.appearance = self.appearance.clone();
             crate::settings::apply(ctx, &self.appearance);
+            if let Some(loader) = &self.webp_loader {
+                loader.set_animation(self.appearance.animate_emotes, self.appearance.emote_fps);
+            }
             if let Err(err) = self.config.save(&self.config_path) {
                 tracing::warn!("не удалось сохранить конфиг: {err:#}");
             }
@@ -658,6 +677,47 @@ mod tests {
             parts: vec![Part::Text("hi".into())],
             ts_ms: 1,
         }
+    }
+
+    #[test]
+    fn settings_window_shows_the_animation_controls() {
+        let ctx = egui::Context::default();
+        crate::settings::apply(&ctx, &crate::config::Appearance::default());
+        let mut app = App::build(Config::default_config(), ctx.clone());
+        app.settings_open = true;
+
+        let mut painted = Vec::new();
+        // Two passes: a window lays itself out on the first one and paints on
+        // the second one.
+        for time in [0.0, 0.1] {
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1200.0, 900.0),
+                )),
+                time: Some(time),
+                ..Default::default()
+            };
+            let mut output = ctx.run_ui(input, |_ui| app.settings_window(&ctx));
+            output.textures_delta.clear();
+            painted = output
+                .shapes
+                .iter()
+                .filter_map(|clipped| match &clipped.shape {
+                    egui::Shape::Text(text) => Some(text.galley.text().to_string()),
+                    _ => None,
+                })
+                .collect();
+        }
+
+        assert!(
+            painted.iter().any(|text| text == "анимация эмоутов"),
+            "no animation checkbox in the settings window: {painted:?}"
+        );
+        assert!(
+            painted.iter().any(|text| text == "кадров в секунду"),
+            "no animation rate slider in the settings window"
+        );
     }
 
     #[test]

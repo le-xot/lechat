@@ -75,6 +75,10 @@ pub struct Appearance {
     pub emote_scale: f32,
     #[serde(default)]
     pub emote_offset: f32,
+    #[serde(default = "default_true")]
+    pub animate_emotes: bool,
+    #[serde(default = "default_emote_fps")]
+    pub emote_fps: f32,
     #[serde(default = "default_row_gap")]
     pub row_gap: f32,
     #[serde(default = "default_true")]
@@ -87,6 +91,10 @@ fn default_row_gap() -> f32 {
 
 fn default_emote_scale() -> f32 {
     1.8
+}
+
+fn default_emote_fps() -> f32 {
+    crate::images::ANIMATION_FPS
 }
 
 fn default_true() -> bool {
@@ -106,6 +114,8 @@ impl Default for Appearance {
             show_seconds: false,
             emote_scale: default_emote_scale(),
             emote_offset: 0.0,
+            animate_emotes: true,
+            emote_fps: default_emote_fps(),
             row_gap: default_row_gap(),
             show_badges: true,
         }
@@ -289,6 +299,35 @@ channel = "a"
         assert!(!cfg.appearance.show_seconds);
         assert_eq!(cfg.appearance.emote_scale, 1.8);
         assert!(cfg.appearance.show_badges);
+        assert!(cfg.appearance.animate_emotes);
+        assert_eq!(cfg.appearance.emote_fps, 15.0);
+    }
+
+    #[test]
+    fn animation_settings_round_trip_through_the_config() {
+        let mut cfg = Config::parse(
+            r#"
+[[panel]]
+kind = "twitch"
+channel = "a"
+
+[appearance]
+animate_emotes = false
+emote_fps = 8.0
+"#,
+        )
+        .unwrap();
+        assert!(!cfg.appearance.animate_emotes);
+        assert_eq!(cfg.appearance.emote_fps, 8.0);
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        cfg.appearance.emote_fps = 22.0;
+        cfg.appearance.animate_emotes = true;
+        cfg.save(&path).unwrap();
+        let reread = Config::load_or_create(&path).unwrap();
+        assert!(reread.appearance.animate_emotes);
+        assert_eq!(reread.appearance.emote_fps, 22.0);
     }
 
     #[test]
