@@ -391,9 +391,12 @@ impl App {
                     changed = true;
                 }
                 ui.label(
-                    egui::RichText::new("размер и шрифт сохраняются в config.toml")
-                        .size(11.0)
-                        .color(egui::Color32::from_gray(130)),
+                    egui::RichText::new(format!(
+                        "версия {} · настройки сохраняются в config.toml",
+                        env!("CARGO_PKG_VERSION")
+                    ))
+                    .size(11.0)
+                    .color(egui::Color32::from_gray(130)),
                 );
             });
 
