@@ -1,6 +1,6 @@
 pkgbase = lechat-bin
 	pkgdesc = Read-only Twitch and streamx chat in one window
-	pkgver = 1.0.3
+	pkgver = 1.0.4
 	pkgrel = 1
 	url = https://github.com/le-xot/lechat
 	arch = x86_64
@@ -13,7 +13,7 @@ pkgbase = lechat-bin
 	provides = lechat
 	conflicts = lechat
 	options = !strip
-	source = https://github.com/le-xot/lechat/releases/download/v1.0.3/lechat-x86_64-unknown-linux-gnu.tar.gz
+	source = https://github.com/le-xot/lechat/releases/download/v1.0.4/lechat-x86_64-unknown-linux-gnu.tar.gz
 	sha256sums = SKIP
 
 pkgname = lechat-bin
