@@ -42,14 +42,46 @@ pub fn probe_writable(exe: &Path) -> bool {
     }
 }
 
+fn log(text: &str) {
+    let Some(dirs) = directories::ProjectDirs::from("dev", "le-xot", "lechat") else {
+        return;
+    };
+    let dir = dirs.data_dir();
+    let _ = std::fs::create_dir_all(dir);
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(dir.join("update.log"))
+    {
+        use std::io::Write;
+        let _ = writeln!(file, "{} {text}", chrono::Utc::now().to_rfc3339());
+    }
+}
+
+fn send(tx: &UnboundedSender<UpdateState>, state: UpdateState) {
+    log(&format!("{state:?}"));
+    let _ = tx.send(state);
+}
+
+pub fn update_log_path() -> Option<std::path::PathBuf> {
+    directories::ProjectDirs::from("dev", "le-xot", "lechat")
+        .map(|dirs| dirs.data_dir().join("update.log"))
+}
+
 pub fn check(tx: UnboundedSender<UpdateState>) {
     let exe = std::env::current_exe().unwrap_or_default();
+    let writable = probe_writable(&exe);
+    log(&format!(
+        "check: version={} exe={} writable={writable}",
+        env!("CARGO_PKG_VERSION"),
+        exe.display()
+    ));
     if !enabled_for(&exe, cfg!(debug_assertions)) {
-        let _ = tx.send(UpdateState::Disabled);
+        send(&tx, UpdateState::Disabled);
         return;
     }
 
-    let _ = tx.send(UpdateState::Checking);
+    send(&tx, UpdateState::Checking);
     let built = self_update::backends::github::Update::configure()
         .repo_owner("le-xot")
         .repo_name("lechat")
@@ -59,18 +91,18 @@ pub fn check(tx: UnboundedSender<UpdateState>) {
     let updater = match built {
         Ok(updater) => updater,
         Err(err) => {
-            let _ = tx.send(UpdateState::Error(format!("{err:#}")));
+            send(&tx, UpdateState::Error(format!("{err:#}")));
             return;
         }
     };
 
-    if !probe_writable(&exe) {
+    if !writable {
         let state = match updater.is_update_available() {
             Ok(Some(release)) => UpdateState::Available(release.version().to_string()),
             Ok(None) => UpdateState::UpToDate,
             Err(err) => UpdateState::Error(format!("{err:#}")),
         };
-        let _ = tx.send(state);
+        send(&tx, state);
         return;
     }
 
@@ -80,7 +112,7 @@ pub fn check(tx: UnboundedSender<UpdateState>) {
         Ok(_) => UpdateState::UpToDate,
         Err(err) => UpdateState::Error(format!("{err:#}")),
     };
-    let _ = tx.send(state);
+    send(&tx, state);
 }
 
 #[cfg(test)]
@@ -119,5 +151,32 @@ mod tests {
         perms.set_mode(0o555);
         std::fs::set_permissions(&ro, perms).unwrap();
         assert!(!probe_writable(&ro.join("lechat")));
+    }
+}
+
+#[cfg(test)]
+mod live_tests {
+    #[test]
+    #[ignore = "живой запрос к GitHub Releases"]
+    fn github_sees_windows_asset_from_older_version() {
+        let updater = self_update::backends::github::Update::configure()
+            .repo_owner("le-xot")
+            .repo_name("lechat")
+            .bin_name("lechat")
+            .current_version("0.0.1")
+            .target("x86_64-pc-windows-msvc")
+            .build()
+            .unwrap();
+        let releases = updater.get_newer_releases().unwrap();
+        let release = releases
+            .into_vec()
+            .into_iter()
+            .next()
+            .expect("нет новых релизов");
+        let asset = release
+            .asset_for("x86_64-pc-windows-msvc", None)
+            .expect("нет windows-ассета");
+        println!("release={} asset={}", release.version(), asset.name());
+        assert!(asset.name().contains("x86_64-pc-windows-msvc"));
     }
 }
