@@ -1,6 +1,14 @@
+use std::time::Duration;
+
 use crate::config::Appearance;
 use crate::model::{Entry, Message, Part};
 use crate::ui;
+
+/// How soon a visible emote that is still downloading is painted again.
+const PENDING_RETRY: Duration = Duration::from_millis(50);
+/// Retry delay for emotes that failed to load. A broken URL must not turn the
+/// whole window into a redraw loop.
+const FAILED_RETRY: Duration = Duration::from_secs(1);
 
 pub fn entry_ui(ui: &mut egui::Ui, entry: &Entry, channel: &str, appearance: &Appearance) {
     match entry {
@@ -114,18 +122,30 @@ fn paint_emote(
     let (rect, response) = ui.allocate_exact_size(size, egui::Sense::hover());
     response.on_hover_text(emote.name.as_str());
     let image_rect = rect.translate(egui::vec2(0.0, offset));
-    if ui.is_rect_visible(image_rect)
-        && let Ok(egui::load::TexturePoll::Ready { texture }) =
-            egui::Image::new(emote.uri.clone()).load_for_size(ui.ctx(), size)
-    {
-        ui.painter().image(
-            texture.id,
-            image_rect,
-            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-            egui::Color32::WHITE,
-        );
-    } else {
-        ui.ctx().request_repaint();
+    // Rows scrolled out of the feed must not keep the window awake: without
+    // this early return every offscreen emote asks for a repaint on every pass,
+    // and egui happily redraws the whole feed at the monitor refresh rate.
+    if !ui.is_rect_visible(image_rect) {
+        return image_rect;
+    }
+    match egui::Image::new(emote.uri.clone()).load_for_size(ui.ctx(), size) {
+        Ok(egui::load::TexturePoll::Ready { texture }) => {
+            ui.painter().image(
+                texture.id,
+                image_rect,
+                egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                egui::Color32::WHITE,
+            );
+        }
+        Ok(egui::load::TexturePoll::Pending { .. }) => {
+            // The loaders wake the UI up when the bytes arrive; this is only a
+            // safety net, so it is slow enough not to spin at the refresh rate.
+            ui.ctx().request_repaint_after(PENDING_RETRY);
+        }
+        Err(err) => {
+            tracing::debug!(emote = %emote.name, "не удалось загрузить эмоут: {err}");
+            ui.ctx().request_repaint_after(FAILED_RETRY);
+        }
     }
     image_rect
 }
@@ -214,6 +234,30 @@ mod tests {
         output.shapes.iter().any(|clipped| {
             matches!(&clipped.shape, egui::Shape::Text(t) if t.galley.text() == text)
         })
+    }
+
+    #[test]
+    fn offscreen_emote_does_not_ask_for_an_immediate_repaint() {
+        let ctx = egui::Context::default();
+        crate::settings::apply(&ctx, &crate::config::Appearance::default());
+        // Two settle passes: egui asks for its own repaint on the first pass, so
+        // a later pass is the only one that reports the app's own requests.
+        run(&ctx, input(0.0), |_ui| {});
+        run(&ctx, input(0.1), |_ui| {});
+        let output = run(&ctx, input(0.2), |ui| {
+            // Push the emote below the 200px screen of `input`.
+            ui.add_space(500.0);
+            paint_emote(ui, &emote(), egui::vec2(64.0, 64.0), 0.0);
+        });
+        let delay = output
+            .viewport_output
+            .get(&egui::ViewportId::ROOT)
+            .expect("root viewport output")
+            .repaint_delay;
+        assert!(
+            delay >= Duration::from_millis(500),
+            "offscreen emote asked for a repaint in {delay:?}"
+        );
     }
 
     #[test]

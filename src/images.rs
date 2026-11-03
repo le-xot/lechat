@@ -1,10 +1,11 @@
 use std::collections::{HashMap, HashSet};
 use std::io::Cursor;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::time::Duration;
 
 use egui::{
-    ColorImage, FrameDurations, Id, TextureHandle, TextureOptions,
+    ColorImage, TextureHandle, TextureOptions,
     load::{
         BytesPoll, LoadError, SizeHint, SizedTexture, TextureLoadResult, TextureLoader,
         TexturePoll,
@@ -15,6 +16,34 @@ use image_webp::WebPDecoder;
 
 const MAX_FRAMES: u32 = 120;
 
+/// Animation rate shared by every emote in the feed, in frames per second.
+///
+/// A global tick keeps the redraw rate independent of how many animated emotes
+/// are on screen: with a per-emote timer the feed is redrawn on the earliest
+/// deadline of them all, which is every display frame once enough emotes are
+/// visible.
+pub const ANIMATION_FPS: f32 = 15.0;
+pub const MIN_FPS: f32 = 5.0;
+pub const MAX_FPS: f32 = 30.0;
+
+/// Frame shown at `seconds` of the global animation clock.
+pub fn frame_index(seconds: f64, frames: usize, fps: f32) -> usize {
+    if frames <= 1 {
+        return 0;
+    }
+    let fps = f64::from(fps.clamp(MIN_FPS, MAX_FPS));
+    let ticks = (seconds.max(0.0) * fps) as u64;
+    (ticks % frames as u64) as usize
+}
+
+/// Time left until the next animation tick.
+pub fn next_tick(seconds: f64, fps: f32) -> Duration {
+    let fps = f64::from(fps.clamp(MIN_FPS, MAX_FPS));
+    let period = 1.0 / fps;
+    let phase = seconds.max(0.0) % period;
+    Duration::from_secs_f64((period - phase).max(0.001))
+}
+
 pub fn is_webp(bytes: &[u8]) -> bool {
     bytes.len() >= 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP"
 }
@@ -22,7 +51,6 @@ pub fn is_webp(bytes: &[u8]) -> bool {
 #[derive(Clone)]
 struct AnimatedWebp {
     frames: Vec<Arc<ColorImage>>,
-    durations: FrameDurations,
 }
 
 impl AnimatedWebp {
@@ -35,7 +63,6 @@ impl AnimatedWebp {
             .unwrap_or(width * height * 4);
         let mut buffer = vec![0u8; buffer_len];
         let mut frames = Vec::new();
-        let mut durations = Vec::new();
 
         let animated = decoder.is_animated();
         let count = if animated {
@@ -45,23 +72,17 @@ impl AnimatedWebp {
         };
 
         for _ in 0..count {
-            let delay_ms = if animated {
-                decoder.read_frame(&mut buffer).map_err(|e| e.to_string())?
+            if animated {
+                decoder.read_frame(&mut buffer).map_err(|e| e.to_string())?;
             } else {
                 decoder
                     .read_image(&mut buffer)
                     .map_err(|e| e.to_string())?;
-                1000
-            };
+            }
             frames.push(Arc::new(to_color_image(&buffer, width, height)?));
-            // Cap the redraw rate: egui relayouts the whole feed per animation frame.
-            durations.push(Duration::from_millis(u64::from(delay_ms.max(60))));
         }
 
-        Ok(Self {
-            frames,
-            durations: FrameDurations::new(durations),
-        })
+        Ok(Self { frames })
     }
 
     fn size(&self) -> egui::Vec2 {
@@ -129,14 +150,48 @@ fn to_color_image(buffer: &[u8], width: usize, height: usize) -> Result<ColorIma
 
 type Entry = Result<Animated, String>;
 
-#[derive(Default)]
 pub struct WebpAnimationLoader {
     cache: Mutex<HashMap<String, Entry>>,
     painted: Mutex<HashSet<String>>,
+    animate: AtomicBool,
+    fps: AtomicU32,
+}
+
+impl Default for WebpAnimationLoader {
+    fn default() -> Self {
+        Self {
+            cache: Mutex::default(),
+            painted: Mutex::default(),
+            animate: AtomicBool::new(true),
+            fps: AtomicU32::new(ANIMATION_FPS.to_bits()),
+        }
+    }
 }
 
 impl WebpAnimationLoader {
     pub const ID: &'static str = "lechat_webp_animation";
+
+    /// Emote animation settings come from the config and can change while the
+    /// app runs, so they live behind atomics that the UI thread writes and the
+    /// paint path reads.
+    pub fn set_animation(&self, animate: bool, fps: f32) {
+        self.animate.store(animate, Ordering::Relaxed);
+        self.fps
+            .store(fps.clamp(MIN_FPS, MAX_FPS).to_bits(), Ordering::Relaxed);
+    }
+
+    pub fn animation_enabled(&self) -> bool {
+        self.animate.load(Ordering::Relaxed)
+    }
+
+    pub fn fps(&self) -> f32 {
+        let fps = f32::from_bits(self.fps.load(Ordering::Relaxed));
+        if fps.is_finite() {
+            fps.clamp(MIN_FPS, MAX_FPS)
+        } else {
+            ANIMATION_FPS
+        }
+    }
 
     /// Bytes of decoded animation frames currently held.
     pub fn cached_bytes(&self) -> usize {
@@ -154,12 +209,24 @@ impl WebpAnimationLoader {
         std::mem::take(&mut *self.painted.lock())
     }
 
-    fn cached(&self, uri: &str, index: usize, options: TextureOptions) -> TextureLoadResult {
+    /// Returns the texture for the frame that is due at this moment.
+    ///
+    /// The frame index is derived from the global animation clock instead of a
+    /// timer per emote, so a feed full of animated emotes still costs one
+    /// redraw per tick rather than one per emote.
+    fn cached(&self, ctx: &egui::Context, uri: &str, options: TextureOptions) -> TextureLoadResult {
         self.painted.lock().insert(uri.to_string());
+        let now = ctx.input(|input| input.time);
+        let fps = self.fps();
         let mut cache = self.cache.lock();
         match cache.get_mut(uri) {
             Some(Ok(animated)) => {
-                animated.show(index, options);
+                if self.animation_enabled() {
+                    animated.show(frame_index(now, animated.webp.frames.len(), fps), options);
+                    if animated.webp.frames.len() > 1 {
+                        ctx.request_repaint_after(next_tick(now, fps));
+                    }
+                }
                 Ok(TexturePoll::Ready {
                     texture: animated.texture(),
                 })
@@ -173,27 +240,19 @@ impl WebpAnimationLoader {
         &self,
         ctx: &egui::Context,
         uri: &str,
-        index: usize,
         options: TextureOptions,
         decoded: Result<AnimatedWebp, String>,
     ) -> TextureLoadResult {
         match decoded {
             Ok(webp) => {
-                let webp = Arc::new(webp);
-                ctx.data_mut(|data| {
-                    *data.get_temp_mut_or_default(Id::unique(uri)) = webp.durations.clone();
-                });
                 let handle = ctx.load_texture(uri, webp.frames[0].as_ref().clone(), options);
-                let mut animated = Animated {
-                    webp,
+                let animated = Animated {
+                    webp: Arc::new(webp),
                     handle,
                     shown: 0,
                 };
-                animated.show(index, options);
-                let texture = animated.texture();
                 self.cache.lock().insert(uri.to_string(), Ok(animated));
-                self.painted.lock().insert(uri.to_string());
-                Ok(TexturePoll::Ready { texture })
+                self.cached(ctx, uri, options)
             }
             Err(err) => {
                 self.cache
@@ -217,12 +276,12 @@ impl TextureLoader for WebpAnimationLoader {
         options: TextureOptions,
         _hint: SizeHint,
     ) -> TextureLoadResult {
-        let Ok((uri, index)) = egui::decode_animated_image_uri(frame_uri) else {
+        let Ok((uri, _index)) = egui::decode_animated_image_uri(frame_uri) else {
             return Err(LoadError::NotSupported);
         };
 
         if self.cache.lock().contains_key(uri) {
-            return self.cached(uri, index, options);
+            return self.cached(ctx, uri, options);
         }
 
         match ctx.try_load_bytes(uri) {
@@ -230,7 +289,7 @@ impl TextureLoader for WebpAnimationLoader {
                 if !is_webp(&bytes) {
                     return Err(LoadError::NotSupported);
                 }
-                self.insert(ctx, uri, index, options, AnimatedWebp::decode(&bytes))
+                self.insert(ctx, uri, options, AnimatedWebp::decode(&bytes))
             }
             Ok(BytesPoll::Pending { size }) => Ok(TexturePoll::Pending { size }),
             Err(err) => Err(err),
@@ -319,6 +378,44 @@ impl Default for ImageCache {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn animation_advances_one_frame_per_tick() {
+        assert_eq!(frame_index(0.0, 4, 10.0), 0);
+        assert_eq!(frame_index(0.099, 4, 10.0), 0);
+        assert_eq!(frame_index(0.1, 4, 10.0), 1);
+        assert_eq!(frame_index(0.35, 4, 10.0), 3);
+        // Loops around after the last frame.
+        assert_eq!(frame_index(0.4, 4, 10.0), 0);
+    }
+
+    #[test]
+    fn static_image_never_advances() {
+        assert_eq!(frame_index(1234.5, 1, 10.0), 0);
+    }
+
+    #[test]
+    fn next_tick_is_within_one_period() {
+        assert_eq!(next_tick(0.0, 10.0), Duration::from_millis(100));
+        let delay = next_tick(0.08, 10.0);
+        assert!(delay > Duration::ZERO);
+        assert!(delay <= Duration::from_millis(20));
+    }
+
+    #[test]
+    fn animation_settings_are_shared_with_the_loader() {
+        let loader = WebpAnimationLoader::default();
+        assert!(loader.animation_enabled());
+        assert_eq!(loader.fps(), ANIMATION_FPS);
+        loader.set_animation(false, 8.0);
+        assert!(!loader.animation_enabled());
+        assert_eq!(loader.fps(), 8.0);
+        // Junk from a hand-edited config must not produce a zero-length tick.
+        loader.set_animation(true, 0.0);
+        assert!(loader.fps() >= MIN_FPS);
+        loader.set_animation(true, 1000.0);
+        assert!(loader.fps() <= MAX_FPS);
+    }
 
     #[test]
     fn detects_webp_header() {
