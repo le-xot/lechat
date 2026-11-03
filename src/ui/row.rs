@@ -166,3 +166,79 @@ fn hover_emote(ui: &mut egui::Ui, rect: egui::Rect, name: &str) {
     )
     .on_hover_text(name);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::EmotePart;
+
+    fn emote() -> EmotePart {
+        EmotePart {
+            name: "catKISS".into(),
+            uri: "https://cdn.example/catKISS.webp".into(),
+            aspect: 1.0,
+            zero_width: false,
+        }
+    }
+
+    fn input(time: f64) -> egui::RawInput {
+        egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(400.0, 200.0),
+            )),
+            time: Some(time),
+            ..Default::default()
+        }
+    }
+
+    fn run(
+        ctx: &egui::Context,
+        input: egui::RawInput,
+        add: impl FnMut(&mut egui::Ui),
+    ) -> egui::FullOutput {
+        let mut output = ctx.run_ui(input, add);
+        output.textures_delta.clear();
+        output
+    }
+
+    fn draw_emote(ctx: &egui::Context, input: egui::RawInput) -> (egui::Rect, egui::FullOutput) {
+        let mut rect = egui::Rect::NOTHING;
+        let output = run(ctx, input, |ui| {
+            rect = paint_emote(ui, &emote(), egui::vec2(64.0, 64.0), 0.0);
+        });
+        (rect, output)
+    }
+
+    fn tooltip_painted(output: &egui::FullOutput, text: &str) -> bool {
+        output.shapes.iter().any(|clipped| {
+            matches!(&clipped.shape, egui::Shape::Text(t) if t.galley.text() == text)
+        })
+    }
+
+    #[test]
+    fn hovering_an_emote_shows_its_name_after_half_a_second() {
+        let ctx = egui::Context::default();
+        let (rect, _) = draw_emote(&ctx, input(0.0));
+        assert!(rect.is_positive(), "emote was not laid out");
+
+        let mut moved = input(0.1);
+        moved.events = vec![egui::Event::PointerMoved(rect.center())];
+        draw_emote(&ctx, moved);
+
+        // A tenth of a second after the pointer stopped: still nothing.
+        let (_, output) = draw_emote(&ctx, input(0.2));
+        assert!(!tooltip_painted(&output, "catKISS"));
+
+        // Past the half-second delay the name shows up.
+        let mut shown = false;
+        for frame in 7..90 {
+            let (_, output) = draw_emote(&ctx, input(0.1 + f64::from(frame) * 0.016));
+            if tooltip_painted(&output, "catKISS") {
+                shown = true;
+                break;
+            }
+        }
+        assert!(shown, "tooltip with the emote name was not painted");
+    }
+}
