@@ -4,7 +4,7 @@ pub mod timeline;
 use crate::model::Platform;
 
 pub const NEAR_BOTTOM_PX: f32 = 64.0;
-pub const EMOTE_LINE_FACTOR: f32 = 1.5;
+pub const EMOTE_LINE_FACTOR: f32 = 1.25;
 
 /// Relative luminance of an sRGB colour (0..1).
 pub fn luminance([r, g, b]: [u8; 3]) -> f32 {
@@ -115,8 +115,8 @@ mod tests {
     #[test]
     fn emote_keeps_aspect_ratio() {
         let s = emote_size(20.0, 3.0);
-        assert_eq!(s.y, 30.0);
-        assert_eq!(s.x, 90.0);
+        assert_eq!(s.y, 25.0);
+        assert_eq!(s.x, 75.0);
     }
 
     #[test]
