@@ -5,11 +5,15 @@ use tokio::task::JoinHandle;
 
 use crate::config::{Appearance, Config, PanelCfg, PanelKind};
 use crate::emotes::EmoteCatalog;
+use crate::images::{ImageCache, WebpAnimationLoader};
 use crate::model::{Entry, Platform};
 use crate::providers::{ConnectionStatus, ProviderEvent, streamx, twitch};
 use crate::ui::timeline::Timeline;
 use crate::ui::{self, row, NEAR_BOTTOM_PX};
 use crate::update::{self, UpdateState};
+
+/// How often unused emote textures are looked for, in seconds.
+const IMAGE_GC_INTERVAL: f64 = 1.0;
 
 pub struct SourceState {
     pub cfg: PanelCfg,
@@ -37,6 +41,9 @@ pub struct App {
     settings_open: bool,
     update_state: UpdateState,
     update_rx: Option<UnboundedReceiver<UpdateState>>,
+    webp_loader: Option<Arc<WebpAnimationLoader>>,
+    image_cache: ImageCache,
+    last_image_gc: f64,
 }
 
 impl App {
@@ -46,12 +53,13 @@ impl App {
         config_error: Option<String>,
     ) -> Self {
         egui_extras::install_image_loaders(&cc.egui_ctx);
-        cc.egui_ctx
-            .add_image_loader(Arc::new(crate::images::WebpAnimationLoader::default()));
+        let webp_loader = Arc::new(WebpAnimationLoader::default());
+        cc.egui_ctx.add_texture_loader(webp_loader.clone());
         cc.egui_ctx.set_visuals(egui::Visuals::dark());
 
         let mut app = Self::build(config, cc.egui_ctx.clone());
         app.config_error = config_error;
+        app.webp_loader = Some(webp_loader);
         app.spawn_enabled = true;
         crate::settings::apply(&cc.egui_ctx, &app.appearance);
         if app.config.updates.check {
@@ -77,6 +85,12 @@ impl App {
             .collect::<Vec<_>>();
         let pending_reconnects = vec![false; sources.len()];
         let appearance = config.appearance.clone();
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .thread_name("lechat-net")
+            .enable_all()
+            .build()
+            .expect("tokio runtime");
 
         Self {
             timeline: Timeline::new(),
@@ -84,7 +98,7 @@ impl App {
             config_error: None,
             tx,
             rx,
-            runtime: tokio::runtime::Runtime::new().expect("tokio runtime"),
+            runtime,
             ctx,
             handles: Vec::new(),
             pending_reconnects,
@@ -97,6 +111,9 @@ impl App {
             settings_open: false,
             update_state: UpdateState::Disabled,
             update_rx: None,
+            webp_loader: None,
+            image_cache: ImageCache::new(),
+            last_image_gc: 0.0,
         }
     }
 
@@ -165,6 +182,39 @@ impl App {
         if applied {
             self.ctx.request_repaint();
         }
+    }
+
+    /// Drops decoded frames and textures of emotes that are no longer painted.
+    /// egui keeps every loaded image until it is told otherwise, so without
+    /// this the caches grow for the whole session.
+    fn gc_images(&mut self, ctx: &egui::Context) {
+        let now = ctx.input(|input| input.time);
+        if now - self.last_image_gc < IMAGE_GC_INTERVAL {
+            return;
+        }
+        self.last_image_gc = now;
+
+        let Some(loader) = self.webp_loader.as_ref() else {
+            return;
+        };
+        let painted = loader.take_painted();
+        let bytes = loader.cached_bytes();
+        self.image_cache.touch(now, &painted);
+        let victims = self.image_cache.evict(now, &painted, bytes);
+        if victims.is_empty() {
+            return;
+        }
+        tracing::debug!(
+            count = victims.len(),
+            bytes,
+            "сброшены неиспользуемые эмоуты"
+        );
+        for uri in victims {
+            ctx.forget_image(&uri);
+        }
+        // Decoding allocates and frees a lot of small buffers; glibc keeps
+        // those pages instead of returning them, which counts as RSS.
+        crate::util::release_free_memory();
     }
 
     pub fn apply_event(&mut self, event: ProviderEvent) {
@@ -370,6 +420,7 @@ impl App {
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.drain_events();
+        self.gc_images(ui.ctx());
         if let Some(rx) = &mut self.update_rx
             && let Ok(state) = rx.try_recv()
         {
