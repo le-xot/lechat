@@ -10,7 +10,16 @@ const PENDING_RETRY: Duration = Duration::from_millis(50);
 /// whole window into a redraw loop.
 const FAILED_RETRY: Duration = Duration::from_secs(1);
 
+// Counts rows laid out by the widget pass. Only used by tests: laying out a
+// row is the expensive part of a redraw, painting is culled by egui.
+#[cfg(test)]
+thread_local! {
+    pub static ROWS_LAID_OUT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 pub fn entry_ui(ui: &mut egui::Ui, entry: &Entry, channel: &str, appearance: &Appearance) {
+    #[cfg(test)]
+    ROWS_LAID_OUT.with(|count| count.set(count.get() + 1));
     match entry {
         Entry::Msg(message) => message_ui(ui, message, channel, appearance),
         Entry::Note { text, .. } => {
@@ -47,9 +56,10 @@ pub fn message_ui(
         .unwrap_or(11.0);
     let mut previous_emote: Option<egui::Rect> = None;
 
-    ui.with_layout(
-        egui::Layout::left_to_right(egui::Align::Center).with_main_wrap(true),
-        |ui| {
+    // `horizontal_wrapped` rather than a bare `with_layout`: the latter hands
+    // the row the whole remaining window height, so the first row of the feed
+    // grew to the size of the viewport.
+    ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing = egui::vec2(3.0, 0.0);
         if appearance.show_badges {
             ui::source_badge(
@@ -234,6 +244,38 @@ mod tests {
         output.shapes.iter().any(|clipped| {
             matches!(&clipped.shape, egui::Shape::Text(t) if t.galley.text() == text)
         })
+    }
+
+    #[test]
+    fn a_row_is_only_as_tall_as_its_content() {
+        let ctx = egui::Context::default();
+        crate::settings::apply(&ctx, &crate::config::Appearance::default());
+        let mut input = input(0.0);
+        input.screen_rect = Some(egui::Rect::from_min_size(
+            egui::Pos2::ZERO,
+            egui::vec2(800.0, 600.0),
+        ));
+        let mut height = 0.0;
+        run(&ctx, input, |ui| {
+            let top = ui.cursor().min.y;
+            let message = Message {
+                id: "m1".into(),
+                platform: crate::model::Platform::Twitch,
+                channel: "test".into(),
+                author: crate::model::Author {
+                    name: "tester".into(),
+                    color: None,
+                },
+                parts: vec![Part::Text("hi".into())],
+                ts_ms: 1,
+            };
+            message_ui(ui, &message, "test", &crate::config::Appearance::default());
+            height = ui.cursor().min.y - top;
+        });
+        assert!(
+            height.is_finite() && height < 100.0,
+            "a one-line message row took {height} points"
+        );
     }
 
     #[test]

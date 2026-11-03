@@ -74,6 +74,24 @@ pub enum Entry {
     },
 }
 
+/// Identity of a feed row. Stable while the entry stays in the feed, which is
+/// what a height cache needs: entries are evicted from the front, so indices
+/// shift but identities do not.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum RowKey {
+    Message(Platform, String),
+    Note(i64, String),
+}
+
+impl Entry {
+    pub fn key(&self) -> RowKey {
+        match self {
+            Self::Msg(message) => RowKey::Message(message.platform, message.id.clone()),
+            Self::Note { text, ts_ms } => RowKey::Note(*ts_ms, text.clone()),
+        }
+    }
+}
+
 impl Entry {
     pub fn ts_ms(&self) -> i64 {
         match self {

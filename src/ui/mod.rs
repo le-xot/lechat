@@ -47,6 +47,74 @@ pub fn near_bottom(offset_from_end: f32) -> bool {
     offset_from_end <= NEAR_BOTTOM_PX
 }
 
+/// Which slice of the feed has to be laid out, and how much vertical space the
+/// whole feed takes.
+///
+/// The feed is drawn with a scroll area, and egui lays out every row it is
+/// given. A chat feed is 500 rows deep while only a dozen of them are on
+/// screen, so the rows outside `range` are replaced by their measured heights.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RowLayout {
+    /// Height of the whole feed, including the gaps between rows.
+    pub total: f32,
+    /// Space to reserve before the first row of `range`.
+    pub prefix: f32,
+    /// Rows to actually lay out.
+    pub range: std::ops::Range<usize>,
+}
+
+/// Picks the rows that intersect `viewport` (in feed coordinates, `0.0` is the
+/// top of the feed) plus `overscan` rows on each side.
+pub fn layout_rows(
+    heights: &[f32],
+    spacing: f32,
+    viewport_min: f32,
+    viewport_max: f32,
+    overscan: usize,
+) -> RowLayout {
+    if heights.is_empty() {
+        return RowLayout {
+            total: 0.0,
+            prefix: 0.0,
+            range: 0..0,
+        };
+    }
+    let spacing = spacing.max(0.0);
+    let total = heights.iter().sum::<f32>() + spacing * (heights.len() - 1) as f32;
+
+    let mut y = 0.0;
+    let mut first = heights.len() - 1;
+    for (index, height) in heights.iter().enumerate() {
+        if y + height > viewport_min {
+            first = index;
+            break;
+        }
+        y += height + spacing;
+    }
+
+    let mut last = first;
+    let mut bottom = y;
+    for (index, height) in heights.iter().enumerate().skip(first) {
+        if bottom > viewport_max {
+            break;
+        }
+        last = index + 1;
+        bottom += height + spacing;
+    }
+
+    let first = first.saturating_sub(overscan);
+    let last = (last + overscan).min(heights.len());
+    let prefix = heights[..first]
+        .iter()
+        .map(|height| height + spacing)
+        .sum::<f32>();
+    RowLayout {
+        total,
+        prefix,
+        range: first..last,
+    }
+}
+
 pub fn zero_width_rect(
     previous: Option<egui::Rect>,
     cursor: egui::Pos2,
@@ -86,6 +154,59 @@ pub fn source_badge(ui: &mut egui::Ui, platform: Platform, tooltip: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn layout_of_an_empty_feed_takes_no_space() {
+        let layout = layout_rows(&[], 8.0, 0.0, 500.0, 1);
+        assert_eq!(layout.total, 0.0);
+        assert_eq!(layout.range, 0..0);
+    }
+
+    #[test]
+    fn layout_covers_the_viewport_with_measured_heights() {
+        let heights: Vec<f32> = (0..200)
+            .map(|index| if index % 3 == 0 { 40.0 } else { 20.0 })
+            .collect();
+        let spacing = 6.0;
+        let layout = layout_rows(&heights, spacing, 500.0, 700.0, 0);
+
+        let total: f32 = heights.iter().sum::<f32>() + spacing * (heights.len() - 1) as f32;
+        assert!((layout.total - total).abs() < 0.01, "total {}", layout.total);
+
+        let prefix: f32 = heights[..layout.range.start]
+            .iter()
+            .map(|height| height + spacing)
+            .sum();
+        assert!((layout.prefix - prefix).abs() < 0.01, "prefix {}", layout.prefix);
+
+        let last_bottom: f32 =
+            heights[..layout.range.end].iter().sum::<f32>() + spacing * (layout.range.end - 1) as f32;
+        assert!(layout.prefix <= 500.0, "first row starts below the viewport");
+        assert!(last_bottom >= 700.0, "last row ends above the viewport");
+    }
+
+    #[test]
+    fn layout_skips_most_of_a_long_feed() {
+        let heights = vec![24.0; 500];
+        let layout = layout_rows(&heights, 8.0, 12_000.0, 12_760.0, 1);
+        assert!(layout.range.len() <= 40, "laid out {} rows", layout.range.len());
+    }
+
+    #[test]
+    fn layout_of_a_viewport_past_the_end_shows_the_last_rows() {
+        let heights = vec![20.0; 5];
+        let layout = layout_rows(&heights, 0.0, 1000.0, 1100.0, 0);
+        assert_eq!(layout.range, 4..5);
+    }
+
+    #[test]
+    fn layout_renders_everything_that_fits() {
+        let heights = vec![20.0; 3];
+        let layout = layout_rows(&heights, 4.0, 0.0, 500.0, 0);
+        assert_eq!(layout.range, 0..3);
+        assert_eq!(layout.prefix, 0.0);
+        assert!((layout.total - 68.0).abs() < 0.01);
+    }
 
     #[test]
     fn badge_text_contrasts_with_background() {
