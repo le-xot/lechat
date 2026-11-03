@@ -41,7 +41,7 @@ pub fn message_ui(
     let mut previous_emote: Option<egui::Rect> = None;
 
     ui.with_layout(
-        egui::Layout::left_to_right(egui::Align::Max).with_main_wrap(true),
+        egui::Layout::left_to_right(egui::Align::Center).with_main_wrap(true),
         |ui| {
         ui.spacing_mut().item_spacing = egui::vec2(3.0, 0.0);
         ui::source_badge(
