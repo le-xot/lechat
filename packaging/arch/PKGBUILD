@@ -1,6 +1,6 @@
 # Maintainer: le-xot <lexot.dev@gmail.com>
 pkgname=lechat-bin
-pkgver=1.0.8
+pkgver=1.0.9
 pkgrel=1
 pkgdesc="Read-only Twitch and streamx chat in one window"
 arch=('x86_64')
