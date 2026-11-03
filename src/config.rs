@@ -73,6 +73,14 @@ pub struct Appearance {
     pub show_seconds: bool,
     #[serde(default = "default_emote_scale")]
     pub emote_scale: f32,
+    #[serde(default)]
+    pub emote_offset: f32,
+    #[serde(default = "default_row_gap")]
+    pub row_gap: f32,
+}
+
+fn default_row_gap() -> f32 {
+    8.0
 }
 
 fn default_emote_scale() -> f32 {
@@ -95,6 +103,8 @@ impl Default for Appearance {
             show_time: true,
             show_seconds: false,
             emote_scale: default_emote_scale(),
+            emote_offset: 0.0,
+            row_gap: default_row_gap(),
         }
     }
 }

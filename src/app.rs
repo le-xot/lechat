@@ -238,9 +238,23 @@ impl App {
                 });
                 changed |= ui
                     .add(
-                        egui::Slider::new(&mut appearance.emote_scale, 0.8..=2.0)
+                        egui::Slider::new(&mut appearance.emote_scale, 0.5..=3.0)
                             .step_by(0.05)
                             .text("размер эмоутов"),
+                    )
+                    .changed();
+                changed |= ui
+                    .add(
+                        egui::Slider::new(&mut appearance.emote_offset, -12.0..=12.0)
+                            .step_by(0.5)
+                            .text("сдвиг эмоутов по вертикали"),
+                    )
+                    .changed();
+                changed |= ui
+                    .add(
+                        egui::Slider::new(&mut appearance.row_gap, 0.0..=24.0)
+                            .step_by(0.5)
+                            .text("расстояние между строками"),
                     )
                     .changed();
                 changed |= ui
@@ -510,7 +524,7 @@ fn feed(ui: &mut egui::Ui, timeline: &mut Timeline, appearance: &Appearance) {
 
     // Twitch/streamx render chat rows back-to-back; egui's default vertical
     // item spacing makes the feed look airy.
-    ui.spacing_mut().item_spacing.y = 8.0;
+    ui.spacing_mut().item_spacing.y = appearance.row_gap.clamp(0.0, 24.0);
 
     let scroll = egui::ScrollArea::vertical()
         .auto_shrink([false, false])
