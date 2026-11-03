@@ -4,7 +4,6 @@ pub mod timeline;
 use crate::model::Platform;
 
 pub const NEAR_BOTTOM_PX: f32 = 64.0;
-pub const EMOTE_LINE_FACTOR: f32 = 1.5;
 
 /// Relative luminance of an sRGB colour (0..1).
 pub fn luminance([r, g, b]: [u8; 3]) -> f32 {
@@ -39,8 +38,8 @@ pub fn format_time(ts_ms: i64, with_seconds: bool) -> String {
         .unwrap_or_else(|| "--:--".to_string())
 }
 
-pub fn emote_size(line_height: f32, aspect: f32) -> egui::Vec2 {
-    let height = line_height * EMOTE_LINE_FACTOR;
+pub fn emote_size(font_size: f32, scale: f32, aspect: f32) -> egui::Vec2 {
+    let height = font_size * scale.clamp(0.8, 2.0);
     egui::vec2(height * aspect.clamp(0.1, 8.0), height)
 }
 
@@ -59,7 +58,7 @@ pub fn zero_width_rect(
             egui::Rect::from_center_size(prev.center(), size)
         }
         None => {
-            let side = line_height * EMOTE_LINE_FACTOR * 0.75;
+            let side = line_height * 0.75;
             egui::Rect::from_min_size(cursor, egui::vec2(side, side))
         }
     }
@@ -114,7 +113,7 @@ mod tests {
 
     #[test]
     fn emote_keeps_aspect_ratio() {
-        let s = emote_size(20.0, 3.0);
+        let s = emote_size(20.0, 1.5, 3.0);
         assert_eq!(s.y, 30.0);
         assert_eq!(s.x, 90.0);
     }

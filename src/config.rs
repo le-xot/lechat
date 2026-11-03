@@ -71,6 +71,12 @@ pub struct Appearance {
     pub show_time: bool,
     #[serde(default)]
     pub show_seconds: bool,
+    #[serde(default = "default_emote_scale")]
+    pub emote_scale: f32,
+}
+
+fn default_emote_scale() -> f32 {
+    1.8
 }
 
 fn default_true() -> bool {
@@ -88,6 +94,7 @@ impl Default for Appearance {
             font_family: None,
             show_time: true,
             show_seconds: false,
+            emote_scale: default_emote_scale(),
         }
     }
 }
@@ -267,6 +274,7 @@ channel = "a"
         assert!(cfg.appearance.font_family.is_none());
         assert!(cfg.appearance.show_time);
         assert!(!cfg.appearance.show_seconds);
+        assert_eq!(cfg.appearance.emote_scale, 1.8);
     }
 
     #[test]

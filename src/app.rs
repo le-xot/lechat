@@ -237,6 +237,13 @@ impl App {
                         .changed();
                 });
                 changed |= ui
+                    .add(
+                        egui::Slider::new(&mut appearance.emote_scale, 0.8..=2.0)
+                            .step_by(0.05)
+                            .text("размер эмоутов"),
+                    )
+                    .changed();
+                changed |= ui
                     .checkbox(&mut updates_check, "проверять обновления")
                     .changed();
                 ui.horizontal(|ui| {

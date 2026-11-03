@@ -26,6 +26,12 @@ pub fn message_ui(
     appearance: &Appearance,
 ) {
     let line_height = ui.text_style_height(&egui::TextStyle::Body);
+    let font_size = ui
+        .style()
+        .text_styles
+        .get(&egui::TextStyle::Body)
+        .map(|font| font.size)
+        .unwrap_or(14.0);
     let small_size = ui
         .style()
         .text_styles
@@ -34,7 +40,9 @@ pub fn message_ui(
         .unwrap_or(11.0);
     let mut previous_emote: Option<egui::Rect> = None;
 
-    ui.horizontal_wrapped(|ui| {
+    ui.with_layout(
+        egui::Layout::left_to_right(egui::Align::Max).with_main_wrap(true),
+        |ui| {
         ui.spacing_mut().item_spacing = egui::vec2(3.0, 0.0);
         ui::source_badge(
             ui,
@@ -71,7 +79,7 @@ pub fn message_ui(
                     ui.hyperlink_to(url.clone(), url.clone());
                 }
                 Part::Emote(emote) => {
-                    let size = ui::emote_size(line_height, emote.aspect);
+                    let size = ui::emote_size(font_size, appearance.emote_scale, emote.aspect);
                     if emote.zero_width {
                         if let Some(previous) = previous_emote
                             && ui.is_rect_visible(previous)
