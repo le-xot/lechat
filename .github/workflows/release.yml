@@ -30,6 +30,7 @@ jobs:
           mkdir -p staging
           cp target/release/lechat staging/
           cp assets/lechat.desktop assets/lechat.png README.md LICENSE staging/
+          cp -r assets/icons staging/
           tar -czf "${{ matrix.asset }}" -C staging .
 
       - name: Package (Windows)
