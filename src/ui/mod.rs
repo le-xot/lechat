@@ -66,18 +66,21 @@ pub fn zero_width_rect(
 }
 
 pub fn source_badge(ui: &mut egui::Ui, platform: Platform, tooltip: &str) {
-    let size = egui::vec2(16.0, 16.0);
+    let size = egui::vec2(18.0, 18.0);
     let (rect, response) = ui.allocate_exact_size(size, egui::Sense::hover());
     let [r, g, b] = platform.badge_color();
-    ui.painter()
-        .rect_filled(rect, 4.0, egui::Color32::from_rgb(r, g, b));
-    ui.painter().text(
-        rect.center(),
-        egui::Align2::CENTER_CENTER,
-        platform.badge_letter(),
-        egui::FontId::proportional(10.0),
-        contrasting_text(platform.badge_color()),
+    let background = egui::Color32::from_rgb(r, g, b);
+    ui.painter().rect_filled(rect, 5.0, background);
+
+    let text_color = contrasting_text(platform.badge_color());
+    let galley = ui.painter().layout_no_wrap(
+        platform.badge_letter().to_string(),
+        egui::FontId::proportional(11.0),
+        text_color,
     );
+    let pos = rect.center() - galley.size() / 2.0 + egui::vec2(0.0, 0.5);
+    ui.painter().galley(pos, galley, text_color);
+
     response.on_hover_text(tooltip);
 }
 
