@@ -6,7 +6,6 @@ pub fn entry_ui(ui: &mut egui::Ui, entry: &Entry, channel: &str, appearance: &Ap
     match entry {
         Entry::Msg(message) => message_ui(ui, message, channel, appearance),
         Entry::Note { text, .. } => {
-            ui.add_space(2.0);
             ui.vertical_centered(|ui| {
                 ui.label(
                     egui::RichText::new(text)
@@ -36,7 +35,7 @@ pub fn message_ui(
     let mut previous_emote: Option<egui::Rect> = None;
 
     ui.horizontal_wrapped(|ui| {
-        ui.spacing_mut().item_spacing.x = 4.0;
+        ui.spacing_mut().item_spacing = egui::vec2(3.0, 0.0);
         ui::source_badge(
             ui,
             message.platform,
