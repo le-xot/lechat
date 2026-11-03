@@ -78,7 +78,7 @@ pub fn source_badge(ui: &mut egui::Ui, platform: Platform, tooltip: &str) {
         egui::FontId::proportional(11.0),
         text_color,
     );
-    let pos = rect.center() - galley.size() / 2.0 + egui::vec2(0.0, 0.5);
+    let pos = rect.center() - galley.size() / 2.0 + egui::vec2(0.0, -0.5);
     ui.painter().galley(pos, galley, text_color);
 
     response.on_hover_text(tooltip);
