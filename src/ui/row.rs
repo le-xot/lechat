@@ -10,7 +10,16 @@ const PENDING_RETRY: Duration = Duration::from_millis(50);
 /// whole window into a redraw loop.
 const FAILED_RETRY: Duration = Duration::from_secs(1);
 
+// Counts rows laid out by the widget pass. Only used by tests: laying out a
+// row is the expensive part of a redraw, painting is culled by egui.
+#[cfg(test)]
+thread_local! {
+    pub static ROWS_LAID_OUT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 pub fn entry_ui(ui: &mut egui::Ui, entry: &Entry, channel: &str, appearance: &Appearance) {
+    #[cfg(test)]
+    ROWS_LAID_OUT.with(|count| count.set(count.get() + 1));
     match entry {
         Entry::Msg(message) => message_ui(ui, message, channel, appearance),
         Entry::Note { text, .. } => {

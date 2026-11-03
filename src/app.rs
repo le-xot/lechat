@@ -601,11 +601,13 @@ fn feed(ui: &mut egui::Ui, timeline: &mut Timeline, appearance: &Appearance) {
     // Twitch/streamx render chat rows back-to-back; egui's default vertical
     // item spacing makes the feed look airy.
     ui.spacing_mut().item_spacing.y = appearance.row_gap.clamp(0.0, 24.0);
+    let spacing = ui.spacing().item_spacing.y;
 
     let scroll = egui::ScrollArea::vertical()
         .auto_shrink([false, false])
         .stick_to_bottom(timeline.follow);
-    let output = scroll.show(ui, |ui| {
+    let output = scroll.show_viewport(ui, |ui, viewport| {
+        timeline.apply_layout(appearance, ui.available_width());
         if timeline.entries.is_empty() {
             ui.add_space(24.0);
             ui.vertical_centered(|ui| {
@@ -615,13 +617,47 @@ fn feed(ui: &mut egui::Ui, timeline: &mut Timeline, appearance: &Appearance) {
                         .color(egui::Color32::from_gray(130)),
                 );
             });
+            return;
         }
-        for entry in &timeline.entries {
+
+        // Laying out a row is what a redraw costs, and the feed holds 500 of
+        // them while a dozen fit on screen. Rows outside the viewport are
+        // replaced by their measured heights, so only the visible slice is
+        // laid out.
+        let layout = if timeline.needs_full_measure() {
+            // Nothing measured yet (startup, history burst, font or width
+            // change): one pass over everything fills the cache for good.
+            ui::RowLayout {
+                total: 0.0,
+                prefix: 0.0,
+                range: 0..timeline.entries.len(),
+            }
+        } else {
+            let heights: Vec<f32> = timeline
+                .entries
+                .iter()
+                .map(|entry| {
+                    let key = entry.key();
+                    timeline.height(&key)
+                })
+                .collect();
+            let layout = ui::layout_rows(&heights, spacing, viewport.min.y, viewport.max.y, 1);
+            ui.set_height(layout.total);
+            ui.add_space(layout.prefix);
+            layout
+        };
+
+        for index in layout.range {
+            let entry = &timeline.entries[index];
             let channel = entry
                 .message()
                 .map(|message| message.channel.as_str())
                 .unwrap_or("");
+            let key = entry.key();
+            let top = ui.cursor().min.y;
             row::entry_ui(ui, entry, channel, appearance);
+            let height = (ui.cursor().min.y - top - spacing).max(0.0);
+            timeline.set_height(key, height);
         }
     });
 
@@ -717,6 +753,153 @@ mod tests {
         assert!(
             painted.iter().any(|text| text == "кадров в секунду"),
             "no animation rate slider in the settings window"
+        );
+    }
+
+    #[test]
+    fn feed_lays_out_only_the_rows_on_screen() {
+        let ctx = egui::Context::default();
+        crate::settings::apply(&ctx, &crate::config::Appearance::default());
+        let mut app = test_app();
+        for i in 0..300 {
+            let mut message = msg(&format!("m{i}"));
+            message.author.name = format!("user{i}");
+            message.ts_ms = i as i64 + 1;
+            app.timeline
+                .insert_sorted(crate::model::Entry::Msg(message));
+        }
+
+        let mut layouts = Vec::new();
+        // The first passes settle the scroll offset (the feed sticks to the bottom).
+        for time in [0.0, 0.1, 0.2, 0.3] {
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(800.0, 600.0),
+                )),
+                time: Some(time),
+                ..Default::default()
+            };
+            crate::ui::row::ROWS_LAID_OUT.with(|count| count.set(0));
+            let mut output = ctx.run_ui(input, |ui| {
+                feed(ui, &mut app.timeline, &app.appearance)
+            });
+            output.textures_delta.clear();
+            layouts.push(crate::ui::row::ROWS_LAID_OUT.with(std::cell::Cell::get));
+        }
+
+        assert!(
+            layouts[0] >= 300,
+            "the first pass measures every row once: {layouts:?}"
+        );
+        let settled = *layouts.last().unwrap();
+        assert!(
+            settled > 0 && settled < 100,
+            "{settled} of 300 rows were laid out after the heights were known: {layouts:?}"
+        );
+        assert_eq!(
+            app.timeline.measured_rows(),
+            300,
+            "every row keeps its measured height"
+        );
+    }
+
+    fn painted_texts(
+        ctx: &egui::Context,
+        timeline: &mut Timeline,
+        appearance: &Appearance,
+        events: Vec<egui::Event>,
+        time: f64,
+    ) -> Vec<String> {
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(800.0, 600.0),
+            )),
+            time: Some(time),
+            events,
+            ..Default::default()
+        };
+        let mut output = ctx.run_ui(input, |ui| feed(ui, timeline, appearance));
+        output.textures_delta.clear();
+        output
+            .shapes
+            .iter()
+            .filter_map(|clipped| match &clipped.shape {
+                egui::Shape::Text(text) => Some(text.galley.text().to_string()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn authors(painted: &[String]) -> Vec<usize> {
+        painted
+            .iter()
+            .filter_map(|text| text.strip_prefix("user")?.strip_suffix(':'))
+            .filter_map(|index| index.parse().ok())
+            .collect()
+    }
+
+    #[test]
+    fn scrolling_up_paints_the_older_rows_in_order() {
+        let ctx = egui::Context::default();
+        crate::settings::apply(&ctx, &crate::config::Appearance::default());
+        let mut app = test_app();
+        for i in 0..300 {
+            let mut message = msg(&format!("m{i}"));
+            message.author.name = format!("user{i}");
+            message.ts_ms = i as i64 + 1;
+            app.timeline
+                .insert_sorted(crate::model::Entry::Msg(message));
+        }
+        let mut run = |events: Vec<egui::Event>, time: f64| {
+            painted_texts(&ctx, &mut app.timeline, &app.appearance, events, time)
+        };
+
+        // Settle at the live edge first.
+        let mut painted = Vec::new();
+        for time in [0.0, 0.1, 0.2] {
+            painted = run(Vec::new(), time);
+        }
+        assert!(
+            authors(&painted).contains(&299),
+            "the feed does not start at the live edge"
+        );
+
+        // Wheel up in the middle of the feed, like a human reading back.
+        let pointer = egui::Event::PointerMoved(egui::pos2(400.0, 300.0));
+        for (index, time) in [0.3, 0.35, 0.4, 0.45, 0.5, 0.55].iter().enumerate() {
+            let events = if index == 0 {
+                vec![
+                    pointer.clone(),
+                    egui::Event::MouseWheel {
+                        unit: egui::MouseWheelUnit::Point,
+                        delta: egui::vec2(0.0, 900.0),
+                        phase: egui::TouchPhase::Move,
+                        source: egui::MouseWheelSource::Wheel,
+                        modifiers: Default::default(),
+                    },
+                ]
+            } else {
+                Vec::new()
+            };
+            painted = run(events, *time);
+        }
+
+        let rows = authors(&painted);
+        assert!(!rows.is_empty(), "nothing painted after scrolling up");
+        assert!(
+            !rows.contains(&299),
+            "still stuck at the live edge: {rows:?}"
+        );
+        assert!(
+            rows.windows(2).all(|pair| pair[1] == pair[0] + 1),
+            "rows painted out of order: {rows:?}"
+        );
+        assert!(
+            (5..=40).contains(&rows.len()),
+            "unexpected number of painted rows: {}",
+            rows.len()
         );
     }
 
