@@ -55,7 +55,7 @@ pub fn message_ui(
         let color = message
             .author
             .color
-            .map(ui::readable_nick_color)
+            .map(|[r, g, b]| egui::Color32::from_rgb(r, g, b))
             .unwrap_or(egui::Color32::from_rgb(0xC4, 0xC0, 0xCC));
         ui.label(
             egui::RichText::new(format!("{}:", message.author.name))
