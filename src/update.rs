@@ -87,6 +87,8 @@ pub fn check(tx: UnboundedSender<UpdateState>) {
         .repo_name("lechat")
         .bin_name("lechat")
         .current_version(env!("CARGO_PKG_VERSION"))
+        .no_confirm(true)
+        .show_output(false)
         .build();
     let updater = match built {
         Ok(updater) => updater,
