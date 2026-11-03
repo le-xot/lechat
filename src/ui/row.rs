@@ -217,8 +217,9 @@ mod tests {
     }
 
     #[test]
-    fn hovering_an_emote_shows_its_name_after_half_a_second() {
+    fn hovering_an_emote_shows_its_name_after_a_short_delay() {
         let ctx = egui::Context::default();
+        crate::settings::apply(&ctx, &crate::config::Appearance::default());
         let (rect, _) = draw_emote(&ctx, input(0.0));
         assert!(rect.is_positive(), "emote was not laid out");
 
@@ -230,7 +231,7 @@ mod tests {
         let (_, output) = draw_emote(&ctx, input(0.2));
         assert!(!tooltip_painted(&output, "catKISS"));
 
-        // Past the half-second delay the name shows up.
+        // Past the delay the name shows up.
         let mut shown = false;
         for frame in 7..90 {
             let (_, output) = draw_emote(&ctx, input(0.1 + f64::from(frame) * 0.016));
