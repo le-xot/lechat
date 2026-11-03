@@ -2612,6 +2612,7 @@ dependencies = [
  "futures-util",
  "image",
  "image-webp",
+ "libc",
  "reqwest",
  "rustls",
  "self_update",

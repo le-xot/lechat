@@ -11,6 +11,18 @@ pub fn parse_hex_color(value: &str) -> Option<[u8; 3]> {
     ])
 }
 
+/// Returns free heap pages to the OS.
+///
+/// Decoding emotes allocates and frees many small buffers; glibc keeps the
+/// freed pages on its free lists, so the high-water mark sticks around as RSS
+/// even though nothing uses it.
+pub fn release_free_memory() {
+    #[cfg(target_os = "linux")]
+    unsafe {
+        libc::malloc_trim(0);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
