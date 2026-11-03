@@ -110,7 +110,15 @@ pub fn check(tx: UnboundedSender<UpdateState>) {
         Ok(self_update::VersionStatus::UpToDate(_)) => UpdateState::UpToDate,
         Ok(self_update::VersionStatus::Updated(version)) => UpdateState::Ready(version),
         Ok(_) => UpdateState::UpToDate,
-        Err(err) => UpdateState::Error(format!("{err:#}")),
+        Err(err) => {
+            let hint = updater
+                .is_update_available()
+                .ok()
+                .flatten()
+                .map(|release| format!("; доступна версия {}", release.version()))
+                .unwrap_or_default();
+            UpdateState::Error(format!("{err:#}{hint}"))
+        }
     };
     send(&tx, state);
 }
